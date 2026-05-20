@@ -1,2 +1,13 @@
 localstack-env/
 aws-env/
+
+__pycache__/
+*.pyc
+
+*.zip
+output.json
+transform_output.json
+gold_output.json
+
+.vscode/
+.idea/

@@ -1,0 +1,83 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Hacker News Data Pipeline Infrastructure with Medalion Architecture'
+
+Resources:
+  # Bronze S3 Bucket
+  BronzeLayerBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: 'bronze-layer'
+
+  # Silver S3 Bucket
+  SilverLayerBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: 'silver-layer'
+
+  # Gold S3 Bucket
+  GoldLayerBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: 'gold-layer'
+
+  # Universal IAM Role for all Lambdas
+  LambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: LambdaS3AccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                  - 's3:GetObject'
+                  - 's3:ListBucket'
+                Resource: '*'
+
+  # Lambda 1: Ingestion Function (Bronze)
+  HackerNewsIngestFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: 'HackerNewsIngestFunction'
+      Handler: 'hackerNewsIngest.lambda_handler'
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: 'python3.11'
+      Timeout: 300
+      Code:
+        S3Bucket: 'lambda-code-bucket'
+        S3Key: 'hackerNewsIngest.zip'
+
+  # Lambda 2: Transformation Function (Silver)
+  HackerNewsTransformFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: 'HackerNewsTransformFunction'
+      Handler: 'hackerNewsTransform.lambda_handler'
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: 'python3.11'
+      Timeout: 300
+      Code:
+        S3Bucket: 'lambda-code-bucket'
+        S3Key: 'hackerNewsTransform.zip'
+
+  # Lambda 3: Aggregation Function (Gold)
+  HackerNewsAggregateFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: 'HackerNewsAggregateFunction'
+      Handler: 'hackerNewsAggregate.lambda_handler'
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: 'python3.11'
+      Timeout: 300
+      Code:
+        S3Bucket: 'lambda-code-bucket'
+        S3Key: 'hackerNewsAggregate.zip'
