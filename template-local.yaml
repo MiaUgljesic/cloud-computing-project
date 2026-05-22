@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Hacker News Data Pipeline Infrastructure with Medallion Architecture & VPC Security'
+Description: 'Hacker News Data Pipeline Infrastructure - MiniStack Compatible'
 
 Parameters:
   Environment:
@@ -9,7 +9,6 @@ Parameters:
 
 Resources:
   # ==================== VPC & NETWORKING ====================
-  # VPC za izolovanu mrežnu sredinu
   DataPipelineVPC:
     Type: 'AWS::EC2::VPC'
     Properties:
@@ -20,34 +19,7 @@ Resources:
         - Key: Name
           Value: 'hacker-news-vpc'
 
-  # Internet Gateway (omogućava javnoj podmreži komunikaciju sa internetom)
-  InternetGateway:
-    Type: 'AWS::EC2::InternetGateway'
-    Properties:
-      Tags:
-        - Key: Name
-          Value: 'hacker-news-igw'
-
-  # Spajanje Internet Gateway-a sa VPC-om
-  VPCGatewayAttachment:
-    Type: 'AWS::EC2::VPCGatewayAttachment'
-    Properties:
-      VpcId: !Ref DataPipelineVPC
-      InternetGatewayId: !Ref InternetGateway
-
-  # JAVNA PODMREŽA (Ovde živi NAT Gateway)
-  PublicSubnet:
-    Type: 'AWS::EC2::Subnet'
-    Properties:
-      VpcId: !Ref DataPipelineVPC
-      CidrBlock: '10.0.0.0/24'
-      AvailabilityZone: !Select [0, !GetAZs '']
-      MapPublicIpOnLaunch: true
-      Tags:
-        - Key: Name
-          Value: 'hacker-news-public-subnet'
-
-  # PRIVATNA PODMREŽA (Ovde žive tvoje Lambda funkcije)
+  # Jedna javna podmreža u kojoj će sve raditi na MiniStack-u
   PrivateSubnet:
     Type: 'AWS::EC2::Subnet'
     Properties:
@@ -56,90 +28,18 @@ Resources:
       AvailabilityZone: !Select [0, !GetAZs '']
       Tags:
         - Key: Name
-          Value: 'hacker-news-private-subnet'
-
-  # Elastic IP za NAT Gateway (fiksna javna IP adresa)
-  NatElasticIP:
-    Type: 'AWS::EC2::EIP'
-    DependsOn: VPCGatewayAttachment
-    Properties:
-      Domain: vpc
-
-  # NAT GATEWAY (Omogućava privatnim Lambdama izlaz na net)
-  NATGateway:
-    Type: 'AWS::EC2::NatGateway'
-    Properties:
-      AllocationId: !GetAtt NatElasticIP.AllocationId
-      SubnetId: !Ref PublicSubnet
-      Tags:
-        - Key: Name
-          Value: 'hacker-news-nat-gw'
-
-  # ==================== ROUTE TABLES ====================
-  # Tabela rutiranja za JAVNU podmrežu (ide direktno na Internet Gateway)
-  PublicRouteTable:
-    Type: 'AWS::EC2::RouteTable'
-    Properties:
-      VpcId: !Ref DataPipelineVPC
-      Tags:
-        - Key: Name
-          Value: 'hacker-news-public-rt'
-
-  PublicRoute:
-    Type: 'AWS::EC2::Route'
-    Properties:
-      RouteTableId: !Ref PublicRouteTable
-      DestinationCidrBlock: '0.0.0.0/0'
-      GatewayId: !Ref InternetGateway
-
-  PublicSubnetRouteTableAssociation:
-    Type: 'AWS::EC2::SubnetRouteTableAssociation'
-    Properties:
-      SubnetId: !Ref PublicSubnet
-      RouteTableId: !Ref PublicRouteTable
-
-  # Tabela rutiranja za PRIVATNU podmrežu (SVE ŠALJE NA NAT GATEWAY)
-  PrivateRouteTable:
-    Type: 'AWS::EC2::RouteTable'
-    Properties:
-      VpcId: !Ref DataPipelineVPC
-      Tags:
-        - Key: Name
-          Value: 'hacker-news-private-rt'
-
-  PrivateRoute:
-    Type: 'AWS::EC2::Route'
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable
-      DestinationCidrBlock: '0.0.0.0/0'
-      NatGatewayId: !Ref NATGateway
-
-  PrivateSubnetRouteTableAssociation:
-    Type: 'AWS::EC2::SubnetRouteTableAssociation'
-    Properties:
-      SubnetId: !Ref PrivateSubnet
-      RouteTableId: !Ref PrivateRouteTable
+          Value: 'hacker-news-subnet'
 
   # ==================== SECURITY GROUPS ====================
-  # Security Group for Lambda functions (least privilege)
   LambdaSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
-      GroupDescription: 'Security group for Hacker News Lambda functions - minimal egress to external APIs only'
+      GroupDescription: 'Security group for Hacker News Lambda functions'
       VpcId: !Ref DataPipelineVPC
       SecurityGroupEgress:
-        # Allow HTTPS to external Hacker News API (port 443)
-        - IpProtocol: 'tcp'
-          FromPort: 443
-          ToPort: 443
+        - IpProtocol: '-1'
           CidrIp: '0.0.0.0/0'
-          Description: 'HTTPS to external APIs (Hacker News)'
-        # Allow DNS resolution
-        - IpProtocol: 'udp'
-          FromPort: 53
-          ToPort: 53
-          CidrIp: '0.0.0.0/0'
-          Description: 'DNS resolution'
+          Description: 'Allow all egress for local testing'
       Tags:
         - Key: Name
           Value: 'hacker-news-lambda-sg'
@@ -155,6 +55,7 @@ Resources:
             Principal:
               Service: !Sub 'states.${AWS::Region}.amazonaws.com'
             Action: 'sts:AssumeRole'
+      RoleName: !Sub 'sfn-execution-role-${Environment}' # <-- EXPLICIT NAME FIXES LOCALSTACK BUG
       Policies:
         - PolicyName: StateMachineLambdaInvokePolicy
           PolicyDocument:
@@ -165,65 +66,69 @@ Resources:
                   - 'lambda:InvokeFunction'
                 Resource:
                   - !GetAtt HackerNewsIngestFunction.Arn
-                  - !GetAtt HackerNewsTransformFunction.Arn
-                  - !GetAtt HackerNewsAggregateFunction.Arn
-
+                  - !GetAtt TwitterIngestFunction.Arn
+                  - !GetAtt TransformFunction.Arn
+                  - !GetAtt AggregateFunction.Arn
+                  
   # The Step Functions State Machine
   MedallionPipelineStateMachine:
     Type: 'AWS::StepFunctions::StateMachine'
     Properties:
       StateMachineName: !Sub 'medallion-pipeline-orchestrator-${Environment}'
       RoleArn: !GetAtt StateMachineExecutionRole.Arn
+      # FOOLPROOF LOCALSTACK METHOD: Raw JSON block with variable substitution
       DefinitionString: !Sub |
         {
-          "Comment": "Orchestrates the Hacker News Medallion Architecture Data Pipeline",
-          "StartAt": "IngestToBronze",
+          "Comment": "Medallion Architecture Data Pipeline Orchestrator",
+          "StartAt": "Parallel_Ingestion",
           "States": {
-            "IngestToBronze": {
-              "Type": "Task",
-              "Resource": "${HackerNewsIngestFunction.Arn}",
-              "Parameters": {
-                "ExecutionTime.$": "$$.Execution.StartTime"
-              },
-              "ResultPath": "$.IngestResult",
+            "Parallel_Ingestion": {
+              "Type": "Parallel",
               "Next": "TransformToSilver",
-              "Retry": [
+              "ResultPath": "$.IngestResults",
+              "Branches": [
                 {
-                  "ErrorEquals": ["States.ALL"],
-                  "IntervalSeconds": 5,
-                  "MaxAttempts": 3,
-                  "BackoffRate": 2.0
+                  "StartAt": "IngestHackerNews",
+                  "States": {
+                    "IngestHackerNews": {
+                      "Type": "Task",
+                      "Resource": "${HackerNewsIngestFunction.Arn}",
+                      "End": true
+                    }
+                  }
+                },
+                {
+                  "StartAt": "IngestTwitter",
+                  "States": {
+                    "IngestTwitter": {
+                      "Type": "Task",
+                      "Resource": "${TwitterIngestFunction.Arn}",
+                      "End": true
+                    }
+                  }
                 }
               ]
             },
             "TransformToSilver": {
               "Type": "Task",
-              "Resource": "${HackerNewsTransformFunction.Arn}",
+              "Resource": "${TransformFunction.Arn}",
               "Parameters": {
-                "BronzeFileKey.$": "$.IngestResult.Payload.body.file_key"
+                "HNFileKey.$": "$.IngestResults[0].body.file_key",
+                "TwitterFileKey.$": "$.IngestResults[1].body.file_key"
               },
               "ResultPath": "$.TransformResult",
-              "Next": "AggregateToGold",
-              "Retry": [
-                {
-                  "ErrorEquals": ["States.ALL"],
-                  "IntervalSeconds": 2,
-                  "MaxAttempts": 2,
-                  "BackoffRate": 2.0
-                }
-              ]
+              "Next": "AggregateToGold"
             },
             "AggregateToGold": {
               "Type": "Task",
-              "Resource": "${HackerNewsAggregateFunction.Arn}",
+              "Resource": "${AggregateFunction.Arn}",
               "Parameters": {
-                "SilverFileKey.$": "$.TransformResult.Payload.body.file_key"
+                "SilverFileKey.$": "$.TransformResult.body.file_key"
               },
               "End": true
             }
           }
         }
-
   # ==================== S3 BUCKETS ====================
   # Bronze S3 Bucket - Raw data layer
   BronzeLayerBucket:
@@ -278,7 +183,6 @@ Resources:
   LambdaExecutionRole:
     Type: 'AWS::IAM::Role'
     Properties:
-      RoleName: !Sub 'hacker-news-lambda-role-${Environment}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -286,6 +190,7 @@ Resources:
             Principal:
               Service: lambda.amazonaws.com
             Action: 'sts:AssumeRole'
+      RoleName: !Sub 'lambda-execution-role-${Environment}' # <-- EXPLICIT NAME FIXES LOCALSTACK BUG
       ManagedPolicyArns:
         # Required for VPC Lambda execution
         - 'arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
@@ -335,7 +240,19 @@ Resources:
                 Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/hacker-news-*'
 
   # ==================== LAMBDA FUNCTIONS ====================
-  # Lambda 1: Ingestion Function (Bronze Layer)
+
+  PandasWranglerLayer:
+    Type: 'AWS::Lambda::LayerVersion'
+    Properties:
+      LayerName: 'AWSSDKPandas-Python311'
+      Description: 'Lokalni pandas, numpy i awswrangler layer za MiniStack'
+      Content:
+        S3Bucket: 'lambda-code-bucket'
+        S3Key: 'pandas_layer.zip'
+      CompatibleRuntimes:
+        - python3.11
+
+  # Lambda 1.1: Ingestion Function (Bronze Layer)
   HackerNewsIngestFunction:
     Type: 'AWS::Lambda::Function'
     Properties:
@@ -360,19 +277,43 @@ Resources:
         - Key: Layer
           Value: 'Bronze'
 
-  # Lambda 2: Transformation Function (Silver Layer)
-  HackerNewsTransformFunction:
+  # Lambda 1.2: X (Twitter) Ingestion Function
+  TwitterIngestFunction:
     Type: 'AWS::Lambda::Function'
     Properties:
-      FunctionName: 'HackerNewsTransformFunction'
-      Handler: 'hackerNewsTransform.lambda_handler'
+      FunctionName: 'TwitterIngestFunction'
+      Handler: 'twitterIngest.lambda_handler'
       Role: !GetAtt LambdaExecutionRole.Arn
       Runtime: 'python3.11'
       Timeout: 300
       MemorySize: 512
       Code:
         S3Bucket: 'lambda-code-bucket'
-        S3Key: 'hackerNewsTransform.zip'
+        S3Key: 'twitterIngest.zip'
+      Environment:
+        Variables:
+          BRONZE_BUCKET_NAME: !Ref BronzeLayerBucket
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet
+
+  # Lambda 2: Transformation Function (Silver Layer)
+  TransformFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: 'TransformFunction'
+      Handler: 'transform.lambda_handler'
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: 'python3.11'
+      Timeout: 300
+      MemorySize: 512
+      Layers:
+        - !Ref PandasWranglerLayer  # Povezivanje preko CloudFormation reference
+      Code:
+        S3Bucket: 'lambda-code-bucket'
+        S3Key: 'transform.zip'
       Environment:
         Variables:
           BRONZE_BUCKET_NAME: !Ref BronzeLayerBucket
@@ -387,18 +328,20 @@ Resources:
           Value: 'Silver'
 
   # Lambda 3: Aggregation Function (Gold Layer)
-  HackerNewsAggregateFunction:
+  AggregateFunction:
     Type: 'AWS::Lambda::Function'
     Properties:
-      FunctionName: 'HackerNewsAggregateFunction'
-      Handler: 'hackerNewsAggregate.lambda_handler'
+      FunctionName: 'AggregateFunction'
+      Handler: 'aggregate.lambda_handler'
       Role: !GetAtt LambdaExecutionRole.Arn
       Runtime: 'python3.11'
       Timeout: 300
       MemorySize: 512
+      Layers:
+        - !Ref PandasWranglerLayer  # Povezivanje preko CloudFormation reference
       Code:
         S3Bucket: 'lambda-code-bucket'
-        S3Key: 'hackerNewsAggregate.zip'
+        S3Key: 'aggregate.zip'
       Environment:
         Variables:
           SILVER_BUCKET_NAME: !Ref SilverLayerBucket

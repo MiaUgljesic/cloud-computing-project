@@ -8,7 +8,7 @@ import datetime
 # LocalStack will automatically intercept this inside the container runtime
 s3 = boto3.client('s3')
 
-BUCKET_NAME = "bronze-layer"
+BUCKET_NAME = os.environ.get("BRONZE_BUCKET_NAME", "bronze-layer-fallback")
 
 def lambda_handler(event, context):
     print("[INFO] Starting Hacker News data ingestion pipeline...")
@@ -49,15 +49,18 @@ def lambda_handler(event, context):
         success_message = f"[SUCCESS] Successfully ingested {len(fetched_items)} items into s3://{BUCKET_NAME}/{s3_key}"
         print(success_message)
         
+        # POPRAVKA: Prosleđujemo čist rečnik (objekat) za body, a ne JSON string!
         return {
             'statusCode': 200,
-            'body': json.dumps({'message': success_message})
+            'body': {
+                'message': success_message,
+                'file_key': s3_key,
+                'bucket': BUCKET_NAME
+            }
         }
         
     except Exception as e:
         error_message = f"[ERROR] Ingestion failed: {str(e)}"
         print(error_message)
-        return {
-            'statusCode': 500,
-            'body': json.dumps({'error': error_message})
-        }
+        # Force the function to fail so the State Machine catches it
+        raise e
