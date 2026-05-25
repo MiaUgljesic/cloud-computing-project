@@ -1,0 +1,106 @@
+{
+    "date": "2026-05-25",
+    "data_quality_kpi_percent": 87.5,
+    "hacker_news_daily_counts": {
+        "date": "2026-05-25",
+        "stories_count": 5,
+        "asks_count": 0,
+        "comments_count": 0,
+        "jobs_count": 0,
+        "polls_count": 0
+    },
+    "top_10_x_users_by_followers": [
+        {
+            "username": "tech_user_19",
+            "followers_count": 49967
+        },
+        {
+            "username": "tech_user_94",
+            "followers_count": 12854
+        },
+        {
+            "username": "tech_user_69",
+            "followers_count": 10006
+        },
+        {
+            "username": "tech_user_34",
+            "followers_count": 5290
+        },
+        {
+            "username": "tech_user_9",
+            "followers_count": 1729
+        }
+    ],
+    "top_10_hn_users_highest_karma": [
+        {
+            "username": "Cider9986",
+            "karma_score": 3937
+        },
+        {
+            "username": "theletterf",
+            "karma_score": 3664
+        },
+        {
+            "username": "rbanffy",
+            "karma_score": 3289
+        },
+        {
+            "username": "xngbuilds",
+            "karma_score": 2285
+        },
+        {
+            "username": "garygao",
+            "karma_score": 1655
+        }
+    ],
+    "top_10_hn_users_lowest_karma": [
+        {
+            "username": "garygao",
+            "karma_score": 1655
+        },
+        {
+            "username": "xngbuilds",
+            "karma_score": 2285
+        },
+        {
+            "username": "rbanffy",
+            "karma_score": 3289
+        },
+        {
+            "username": "theletterf",
+            "karma_score": 3664
+        },
+        {
+            "username": "Cider9986",
+            "karma_score": 3937
+        }
+    ],
+    "top_10_hn_jobs_highest_score": [],
+    "top_10_hn_stories_highest_score": [
+        {
+            "post_id": "48267829",
+            "content_text": "Hey HN! We’re Gary and Ian, and we’re building Chert (https:&#x2F;&#x2F;www.trychert.com&#x2F;), an API for businesses to send, receive, and automate iMessage conversations at scale. Check out our demo: https:&#x2F;&#x2F;www.youtube.com&#x2F;watch?v=SRdwvVxMMoI.We originally started by building products on top of iMessage because the blue bubble interface, typing indicators, and reactions made agentic conversations feel more human than ones on SMS&#x2F;RCS. These included a one-shot iMessage agent builder that reached 2,000 users in one week and an automated iMessage outbound sequencer that sent thousands of outbound messages per day.The hard part is that iMessage does not have a native API like SMS&#x2F;RCS. Sending and receiving iMessages requires a separate infrastructure that is difficult to set up and maintain, especially at scale.As we talked to more companies, we realized that the highest-volume use cases for iMessage were not B2C agents or even sales. They were things like customer service, missed-call text-back, cart abandonment, and inbound lead capture in verticals like home services, DTC brands, and property management that drive the highest volume.Furthermore, these companies often need additional support, such as custom infrastructure setup (e.g. contact card, area code, or local worker sessions), integration support with their existing SMS&#x2F;RCS or voice agent systems, and a reliable way to scale their volume over time.We built Chert to be an infrastructure layer for businesses to handle iMessage conversations at scale. Businesses can use our API to send and receive iMessages programmatically, route replies to humans or agents, and integrate conversations into the systems they already use.To maintain stability across both outbound and inbound use cases, we built phone line health checks and SMS&#x2F;RCS fallback systems. We also integrate with existing SMS&#x2F;RCS systems, voice agents, CRMs such as Salesforce, HubSpot, and Attio, and tools like Slack. Finally, we let businesses reliably scale from a few test lines to hundreds of lines with automated line provisioning and a usage-based pricing structure.We’re working with companies doing conversational messaging in DTC, sports programs, property management, and home services at the scale of hundreds of lines.We’d love to hear your thoughts on this and other similar verticals where iMessage could be useful. All comments welcome!",
+            "score": 7317
+        },
+        {
+            "post_id": "48269961",
+            "content_text": "California moves to exempt Linux from its age-verification law after backlash",
+            "score": 231
+        },
+        {
+            "post_id": "48267126",
+            "content_text": "C extensions, portability, and alternative compilers",
+            "score": 156
+        },
+        {
+            "post_id": "48269580",
+            "content_text": "Exit IP VPN servers mitigation rollout",
+            "score": 114
+        },
+        {
+            "post_id": "48265206",
+            "content_text": "Magnifica Humanitas",
+            "score": 57
+        }
+    ]
+}

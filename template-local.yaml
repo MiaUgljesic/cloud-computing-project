@@ -241,17 +241,6 @@ Resources:
 
   # ==================== LAMBDA FUNCTIONS ====================
 
-  PandasWranglerLayer:
-    Type: 'AWS::Lambda::LayerVersion'
-    Properties:
-      LayerName: 'AWSSDKPandas-Python311'
-      Description: 'Lokalni pandas, numpy i awswrangler layer za MiniStack'
-      Content:
-        S3Bucket: 'lambda-code-bucket'
-        S3Key: 'pandas_layer.zip'
-      CompatibleRuntimes:
-        - python3.11
-
   # Lambda 1.1: Ingestion Function (Bronze Layer)
   HackerNewsIngestFunction:
     Type: 'AWS::Lambda::Function'
@@ -309,8 +298,6 @@ Resources:
       Runtime: 'python3.11'
       Timeout: 300
       MemorySize: 512
-      Layers:
-        - !Ref PandasWranglerLayer  # Povezivanje preko CloudFormation reference
       Code:
         S3Bucket: 'lambda-code-bucket'
         S3Key: 'transform.zip'
@@ -337,8 +324,6 @@ Resources:
       Runtime: 'python3.11'
       Timeout: 300
       MemorySize: 512
-      Layers:
-        - !Ref PandasWranglerLayer  # Povezivanje preko CloudFormation reference
       Code:
         S3Bucket: 'lambda-code-bucket'
         S3Key: 'aggregate.zip'
