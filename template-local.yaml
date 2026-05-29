@@ -179,65 +179,107 @@ Resources:
           Value: 'Gold'
 
   # ==================== IAM ROLES & POLICIES ====================
-  # Lambda Execution Role with least privilege S3 access
-  LambdaExecutionRole:
+ 
+  # 1. ULOGA ZA INGEST FUNKCIJE (Samo upis u Bronze)
+  IngestLambdaExecutionRole:
     Type: 'AWS::IAM::Role'
     Properties:
+      RoleName: 'IngestLambdaExecutionRole'
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
+        Version: '2010-09-09'
         Statement:
           - Effect: Allow
             Principal:
-              Service: lambda.amazonaws.com
+              Service: 'lambda.amazonaws.com'
             Action: 'sts:AssumeRole'
-      RoleName: !Sub 'lambda-execution-role-${Environment}' # <-- EXPLICIT NAME FIXES LOCALSTACK BUG
       ManagedPolicyArns:
-        # Required for VPC Lambda execution
         - 'arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
       Policies:
-        # S3 Access Policy - specific buckets only
-        - PolicyName: LambdaBronzeS3AccessPolicy
+        - PolicyName: 'IngestBronzeWritePolicy'
           PolicyDocument:
-            Version: '2012-10-17'
+            Version: '2010-09-09'
             Statement:
-              - Sid: BronzeLayerAccess
-                Effect: Allow
+              - Effect: Allow
                 Action:
                   - 's3:PutObject'
+                Resource:
+                  - !Sub '${BronzeLayerBucket.Arn}/*'
+
+  # 2. ULOGA ZA TRANSFORM FUNKCIJU (Čitanje iz Bronze -> Pisanje/Brisanje u Silver)
+  TransformLambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: 'TransformLambdaExecutionRole'
+      AssumeRolePolicyDocument:
+        Version: '2010-09-09'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 'lambda.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+      Policies:
+        - PolicyName: 'TransformBronzeToSilverPolicy'
+          PolicyDocument:
+            Version: '2010-09-09'
+            Statement:
+              # Čitanje sa Bronze sloja
+              - Effect: Allow
+                Action:
                   - 's3:GetObject'
                   - 's3:ListBucket'
                 Resource:
                   - !GetAtt BronzeLayerBucket.Arn
                   - !Sub '${BronzeLayerBucket.Arn}/*'
-              - Sid: SilverLayerAccess
-                Effect: Allow
+              # Pun pristup Silver sloju (potreban DeleteObject za awswrangler overwrite)
+              - Effect: Allow
                 Action:
+                  - 's3:GetObject'
                   - 's3:PutObject'
+                  - 's3:DeleteObject'
+                  - 's3:ListBucket'
+                Resource:
+                  - !GetAtt SilverLayerBucket.Arn
+                  - !Sub '${SilverLayerBucket.Arn}/*'
+
+  # 3. ULOGA ZA AGGREGATE FUNKCIJU (Čitanje iz Silver -> Pisanje/Brisanje u Gold)
+  AggregateLambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: 'AggregateLambdaExecutionRole'
+      AssumeRolePolicyDocument:
+        Version: '2010-09-09'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 'lambda.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+      Policies:
+        - PolicyName: 'AggregateSilverToGoldPolicy'
+          PolicyDocument:
+            Version: '2010-09-09'
+            Statement:
+              # Čitanje sa Silver sloja
+              - Effect: Allow
+                Action:
                   - 's3:GetObject'
                   - 's3:ListBucket'
                 Resource:
                   - !GetAtt SilverLayerBucket.Arn
                   - !Sub '${SilverLayerBucket.Arn}/*'
-              - Sid: GoldLayerAccess
-                Effect: Allow
+              # Pun pristup Gold sloju za analitiku i snimanje JSON snapshot-a
+              - Effect: Allow
                 Action:
-                  - 's3:PutObject'
                   - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:DeleteObject'
                   - 's3:ListBucket'
                 Resource:
                   - !GetAtt GoldLayerBucket.Arn
                   - !Sub '${GoldLayerBucket.Arn}/*'
-        # CloudWatch Logs Policy
-        - PolicyName: LambdaCloudWatchLogsPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - 'logs:CreateLogGroup'
-                  - 'logs:CreateLogStream'
-                  - 'logs:PutLogEvents'
-                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/hacker-news-*'
 
   # ==================== LAMBDA FUNCTIONS ====================
 
@@ -247,7 +289,7 @@ Resources:
     Properties:
       FunctionName: 'HackerNewsIngestFunction'
       Handler: 'hackerNewsIngest.lambda_handler'
-      Role: !GetAtt LambdaExecutionRole.Arn
+      Role: !GetAtt IngestLambdaExecutionRole.Arn
       Runtime: 'python3.11'
       Timeout: 300
       MemorySize: 512
@@ -272,7 +314,7 @@ Resources:
     Properties:
       FunctionName: 'TwitterIngestFunction'
       Handler: 'twitterIngest.lambda_handler'
-      Role: !GetAtt LambdaExecutionRole.Arn
+      Role: !GetAtt IngestLambdaExecutionRole.Arn
       Runtime: 'python3.11'
       Timeout: 300
       MemorySize: 512
@@ -294,7 +336,7 @@ Resources:
     Properties:
       FunctionName: 'TransformFunction'
       Handler: 'transform.lambda_handler'
-      Role: !GetAtt LambdaExecutionRole.Arn
+      Role: !GetAtt TransformLambdaExecutionRole.Arn
       Runtime: 'python3.11'
       Timeout: 300
       MemorySize: 512
@@ -320,7 +362,7 @@ Resources:
     Properties:
       FunctionName: 'AggregateFunction'
       Handler: 'aggregate.lambda_handler'
-      Role: !GetAtt LambdaExecutionRole.Arn
+      Role: !GetAtt AggregateLambdaExecutionRole.Arn
       Runtime: 'python3.11'
       Timeout: 300
       MemorySize: 512

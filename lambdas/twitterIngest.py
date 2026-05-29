@@ -18,14 +18,17 @@ def lambda_handler(event, context):
         teme = ["Bitcoin", "AI", "CloudComputing", "Serverless", "Python"]
         mock_tweets = []
         
-        for i in range(5):
+        # Generišemo 15 tvitova za bolji uzorak
+        for i in range(15):
             mock_tweets.append({
                 "tweet_id": str(random.randint(1000000000, 9999999999)),
-                "created_at": (datetime.datetime.now() - datetime.timedelta(days=1)).isoformat(),
+                "created_at": (datetime.datetime.now() - datetime.timedelta(days=1)).isoformat() + "Z",
                 "user": f"tech_user_{random.randint(1, 100)}",
                 "text": f"Sjajan dan za učenje o {random.choice(teme)} i AWS Lambda funkcijama! #cloud",
                 "retweet_count": random.randint(0, 50),
                 "favorite_count": random.randint(0, 150),
+                "followers_count": random.randint(10, 50000),  # KLJUČNO: Dodato za Gold layer (Top 10 lista)
+                "is_verified": random.choice([True, False]),   # KLJUČNO: Dodato za Silver layer (Šema)
                 "lang": "en"
             })
             
