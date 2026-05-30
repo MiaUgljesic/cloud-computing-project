@@ -282,7 +282,7 @@ Resources:
     Properties:
       RoleName: 'IngestLambdaExecutionRole'
       AssumeRolePolicyDocument:
-        Version: '2010-09-09'
+        Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
@@ -293,7 +293,7 @@ Resources:
       Policies:
         - PolicyName: 'IngestBronzeWritePolicy'
           PolicyDocument:
-            Version: '2010-09-09'
+            Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
@@ -307,7 +307,7 @@ Resources:
     Properties:
       RoleName: 'TransformLambdaExecutionRole'
       AssumeRolePolicyDocument:
-        Version: '2010-09-09'
+        Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
@@ -318,7 +318,7 @@ Resources:
       Policies:
         - PolicyName: 'TransformBronzeToSilverPolicy'
           PolicyDocument:
-            Version: '2010-09-09'
+            Version: '2012-10-17'
             Statement:
               # Čitanje sa Bronze sloja
               - Effect: Allow
@@ -345,7 +345,7 @@ Resources:
     Properties:
       RoleName: 'AggregateLambdaExecutionRole'
       AssumeRolePolicyDocument:
-        Version: '2010-09-09'
+        Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
@@ -356,7 +356,7 @@ Resources:
       Policies:
         - PolicyName: 'AggregateSilverToGoldPolicy'
           PolicyDocument:
-            Version: '2010-09-09'
+            Version: '2012-10-17'
             Statement:
               # Čitanje sa Silver sloja
               - Effect: Allow
@@ -390,7 +390,7 @@ Resources:
       Timeout: 300
       MemorySize: 512
       Code:
-        S3Bucket: 'lambda-code-bucket'
+        S3Bucket: 'lambda-code-bucket-174435304073'
         S3Key: 'hackerNewsIngest.zip'
       Environment:
         Variables:
@@ -415,7 +415,7 @@ Resources:
       Timeout: 300
       MemorySize: 512
       Code:
-        S3Bucket: 'lambda-code-bucket'
+        S3Bucket: 'lambda-code-bucket-174435304073'
         S3Key: 'twitterIngest.zip'
       Environment:
         Variables:
@@ -436,8 +436,10 @@ Resources:
       Runtime: 'python3.11'
       Timeout: 300
       MemorySize: 512
+      Layers:
+        - 'arn:aws:lambda:eu-north-1:336392948345:layer:AWSSDKPandas-Python311:12'
       Code:
-        S3Bucket: 'lambda-code-bucket'
+        S3Bucket: 'lambda-code-bucket-174435304073'
         S3Key: 'transform.zip'
       Environment:
         Variables:
@@ -462,8 +464,10 @@ Resources:
       Runtime: 'python3.11'
       Timeout: 300
       MemorySize: 512
+      Layers:
+        - 'arn:aws:lambda:eu-north-1:336392948345:layer:AWSSDKPandas-Python311:12'
       Code:
-        S3Bucket: 'lambda-code-bucket'
+        S3Bucket: 'lambda-code-bucket-174435304073'
         S3Key: 'aggregate.zip'
       Environment:
         Variables:
