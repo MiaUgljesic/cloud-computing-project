@@ -5,10 +5,12 @@ import os
 import datetime
 
 s3 = boto3.client('s3')
+# Extract the bucket name from the configured environment variables
 BUCKET_NAME = os.environ.get("BRONZE_BUCKET_NAME", "bronze-layer-fallback")
 
+
+"""Helper function to fetch a single item from the Hacker News API"""
 def fetch_item(item_id):
-    """Pomoćna funkcija za povlačenje pojedinačnog item-a sa HN API-ja"""
     url = f"https://hacker-news.firebaseio.com/v0/item/{item_id}.json"
     req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
     try:
@@ -18,10 +20,9 @@ def fetch_item(item_id):
         return None
 
 def lambda_handler(event, context):
-    print("[INFO] Pokretanje Hacker News data ingestion pipeline-a...")
+    print("[INFO] Starting Hacker News data ingestion pipeline...")
     
     try:
-        # API endpointovi za različite tipove postova (Zadovoljavanje Zahteva 1.1)
         endpoints = {
             "story": "https://hacker-news.firebaseio.com/v0/newstories.json",
             "ask": "https://hacker-news.firebaseio.com/v0/askstories.json",
@@ -32,7 +33,7 @@ def lambda_handler(event, context):
         fetched_items = []
         comment_ids = []
         
-        # 1. Povlačenje svih tipova postova (ograničeno na 15 po tipu zbog Lambda Timeout-a)
+        # 1. Fetch all post types (limited to 15 per type to prevent Lambda Timeout)
         for post_type, url in endpoints.items():
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req) as response:
@@ -42,17 +43,17 @@ def lambda_handler(event, context):
                 item = fetch_item(item_id)
                 if item:
                     fetched_items.append(item)
-                    # Skupljamo `kids` (komentare) kako bismo ispoštovali i povlačenje 'comments' tipa
+                    # Collect kids (comments)
                     if "kids" in item:
                         comment_ids.extend(item["kids"][:2])
 
-        # 2. Povlačenje samih komentara
+        # 2. Fetch the actual comment items
         for cid in comment_ids[:20]:
             comment = fetch_item(cid)
             if comment:
                 fetched_items.append(comment)
 
-        # 3. Slanje na S3 (Bronze)
+        # 3. Upload raw data to S3 (Bronze Layer)
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         s3_key = f"hacker_news/raw_stories_{timestamp}.json"
         
@@ -62,7 +63,7 @@ def lambda_handler(event, context):
             Body=json.dumps(fetched_items, indent=4)
         )
         
-        success_message = f"[SUCCESS] Uspesno prikupljeno {len(fetched_items)} HN objekata (stories, asks, jobs, comments)."
+        success_message = f"[SUCCESS] Successfully ingested {len(fetched_items)} HN objects (stories, asks, jobs, comments)."
         print(success_message)
         
         return {

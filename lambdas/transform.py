@@ -25,7 +25,7 @@ def parse_twitter_timestamp(iso_str):
     return iso_str if iso_str.endswith('Z') else iso_str + "Z"
 
 def lambda_handler(event, context):
-    print("[INFO] Pokretanje oficijalne Silver Layer normalizacije (3NF Parquet)...")
+    print("[INFO] Starting official Silver Layer normalization (3NF Parquet)...")
     
     try:
         hn_file_key = event.get('HNFileKey')
@@ -33,9 +33,9 @@ def lambda_handler(event, context):
         
         users_list = []
         posts_list = []
-        post_kids_list = [] # NOVO: Lista za Flattening ugnježdenih struktura
+        post_kids_list = [] # List for flattening nested comment structures
 
-        # --- 1. OBRADA HACKER NEWS PODATAKA ---
+        # HACKER NEWS DATA PROCESSING
         hn_response = s3.get_object(Bucket=BRONZE_BUCKET, Key=hn_file_key)
         hn_raw_data = json.loads(hn_response['Body'].read().decode('utf-8'))
         
@@ -49,7 +49,7 @@ def lambda_handler(event, context):
                 "username": username,
                 "platform": "HackerNews",
                 "karma_score": item.get("karma", None),
-                "followers_count": None, # HN nema pratioce
+                "followers_count": None, # HN does not have followers
                 "is_verified": None,
                 "created_at": created_utc
             })
@@ -65,7 +65,7 @@ def lambda_handler(event, context):
                 "day": created_utc[8:10]
             })
 
-            # KLJUČNO (Zahtev 2): Poravnanje (flattening) ugnježdenog 'kids' niza
+            # Flattening the nested kids array
             kids = item.get("kids", [])
             if isinstance(kids, list) and len(kids) > 0:
                 for kid_id in kids:
@@ -74,7 +74,7 @@ def lambda_handler(event, context):
                         "kid_comment_id": str(kid_id)
                     })
 
-        # --- 2. OBRADA TWITTER PODATAKA ---
+        # TWITTER DATA PROCESSING
         twitter_response = s3.get_object(Bucket=BRONZE_BUCKET, Key=twitter_file_key)
         twitter_raw_data = json.loads(twitter_response['Body'].read().decode('utf-8'))
         
@@ -103,12 +103,12 @@ def lambda_handler(event, context):
                 "day": created_utc[8:10]
             })
 
-        # --- 3. PRETVARANJE U DATAFRAME I UKLANJANJE DUPLIKATA ---
+        # DATAFRAME CONVERSION AND DEDUPLICATION
         df_users = pd.DataFrame(users_list).drop_duplicates(subset=['username', 'platform'])
         df_posts = pd.DataFrame(posts_list).drop_duplicates(subset=['post_id'])
         df_kids = pd.DataFrame(post_kids_list).drop_duplicates()
 
-        # --- 4. UPIS U S3 PREKO AWS WRANGLER-A (PARQUET) ---
+        # WRITE TO S3 VIA AWS WRANGLER (PARQUET)
         users_path = f"s3://{SILVER_BUCKET}/users/"
         posts_path = f"s3://{SILVER_BUCKET}/posts/"
         kids_path = f"s3://{SILVER_BUCKET}/post_kids_mapping/"
@@ -116,15 +116,15 @@ def lambda_handler(event, context):
         wr.s3.to_parquet(df=df_users, path=users_path, dataset=True, partition_cols=["platform"], mode="overwrite_partitions")
         wr.s3.to_parquet(df=df_posts, path=posts_path, dataset=True, partition_cols=["year", "month", "day"], mode="overwrite_partitions")
         
-        # Upisujemo izravnane veze između postova i komentara
+        # Write flattened relationships between posts and comments
         if not df_kids.empty:
             wr.s3.to_parquet(df=df_kids, path=kids_path, dataset=True, mode="overwrite_partitions")
         
         return {
             'statusCode': 200,
             'body': {
-                'message': 'Normalizacija uspešno izvršena u 3NF Parquet formatu.',
-                'file_key': posts_path # Prosleđujemo Gold layer-u referencu
+                'message': 'Normalization successfully executed in 3NF Parquet format.',
+                'file_key': posts_path # Forwarding reference to the Gold Layer
             }
         }
         

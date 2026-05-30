@@ -6,56 +6,56 @@ import random
 
 s3 = boto3.client('s3')
 
-# Izvlačimo naziv bucketa iz environment varijabli koje smo podesili
+# Extract the bucket name from the configured environment variables
 BUCKET_NAME = os.environ.get("BRONZE_BUCKET_NAME", "bronze-layer-fallback")
 
 def lambda_handler(event, context):
-    print("[INFO] Pokretanje X (Twitter) data ingestion pipeline-a...")
+    print("[INFO] Starting X (Twitter) data ingestion pipeline...")
     
     try:
-        # Simulacija produkcionog dataseta (generisanje mockup tvitova bazirano na realnim datasetovima)
-        # U realnom scenariju ovde možete učitati lokalni CSV/JSON sa Bitcoin/Tehnološkim tvitovima
-        teme = ["Bitcoin", "AI", "CloudComputing", "Serverless", "Python"]
+        # Production dataset simulation (generating mockup tweets based on real datasets)
+        # In a real scenario, you could load a local CSV/JSON file containing Bitcoin/Tech tweets here
+        topics = ["Bitcoin", "AI", "CloudComputing", "Serverless", "Python"]
         mock_tweets = []
         
-        # Generišemo 15 tvitova za bolji uzorak
+        # Generate 15 tweets for a better sample size
         for i in range(15):
             mock_tweets.append({
                 "tweet_id": str(random.randint(1000000000, 9999999999)),
                 "created_at": (datetime.datetime.now() - datetime.timedelta(days=1)).isoformat() + "Z",
                 "user": f"tech_user_{random.randint(1, 100)}",
-                "text": f"Sjajan dan za učenje o {random.choice(teme)} i AWS Lambda funkcijama! #cloud",
+                "text": f"Great day to learn about {random.choice(topics)} and AWS Lambda functions! #cloud",
                 "retweet_count": random.randint(0, 50),
                 "favorite_count": random.randint(0, 150),
-                "followers_count": random.randint(10, 50000),  # KLJUČNO: Dodato za Gold layer (Top 10 lista)
-                "is_verified": random.choice([True, False]),   # KLJUČNO: Dodato za Silver layer (Šema)
+                "followers_count": random.randint(10, 50000),  
+                "is_verified": random.choice([True, False]),   
                 "lang": "en"
             })
             
-        # Kreiranje jedinstvenog ključa (particionisanje po izvoru: twitter/)
+        # Create a unique key (partitioning by source: twitter/)
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         s3_key = f"twitter/raw_tweets_{timestamp}.json"
         
-        # Upisivanje u Bronze layer u izvornom obliku (bez transformacija)
+        # Write to the Bronze layer in its raw format
         s3.put_object(
             Bucket=BUCKET_NAME,
             Key=s3_key,
             Body=json.dumps(mock_tweets, indent=4)
         )
         
-        print(f"[INFO] Uspešno sačuvani raw Twitter podaci na {BUCKET_NAME}/{s3_key}")
+        print(f"[INFO] Successfully saved raw Twitter data to {BUCKET_NAME}/{s3_key}")
         
-        # Vraćamo strukturirani odgovor za Step Function
+        # Return a structured response for the Step Function
         return {
             'statusCode': 200,
             'body': {
-                'message': 'X Ingestion uspešan',
+                'message': 'X Ingestion successful',
                 'file_key': s3_key,
                 'bucket': BUCKET_NAME
             }
         }
         
     except Exception as e:
-        error_msg = f"[ERROR] X Ingestion neuspešan: {str(e)}"
+        error_msg = f"[ERROR] X Ingestion failed: {str(e)}"
         print(error_msg)
         raise e
