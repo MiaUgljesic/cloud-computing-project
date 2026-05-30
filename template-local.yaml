@@ -19,7 +19,7 @@ Resources:
         - Key: Name
           Value: 'hacker-news-vpc'
 
-  # Jedna javna podmreža u kojoj će sve raditi na MiniStack-u
+  # A single subnet to handle all workloads within the MiniStack environment
   PrivateSubnet:
     Type: 'AWS::EC2::Subnet'
     Properties:
@@ -55,7 +55,7 @@ Resources:
             Principal:
               Service: !Sub 'states.${AWS::Region}.amazonaws.com'
             Action: 'sts:AssumeRole'
-      RoleName: !Sub 'sfn-execution-role-${Environment}' # <-- EXPLICIT NAME FIXES LOCALSTACK BUG
+      RoleName: !Sub 'sfn-execution-role-${Environment}'
       Policies:
         - PolicyName: StateMachineLambdaInvokePolicy
           PolicyDocument:
@@ -129,6 +129,7 @@ Resources:
             }
           }
         }
+
   # ==================== S3 BUCKETS ====================
   # Bronze S3 Bucket - Raw data layer
   BronzeLayerBucket:
@@ -179,14 +180,14 @@ Resources:
           Value: 'Gold'
 
   # ==================== IAM ROLES & POLICIES ====================
- 
-  # 1. ULOGA ZA INGEST FUNKCIJE (Samo upis u Bronze)
+  
+  # 1. INGESTION FUNCTION ROLE (Write access to Bronze layer only)
   IngestLambdaExecutionRole:
     Type: 'AWS::IAM::Role'
     Properties:
       RoleName: 'IngestLambdaExecutionRole'
       AssumeRolePolicyDocument:
-        Version: '2010-09-09'
+        Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
@@ -197,7 +198,7 @@ Resources:
       Policies:
         - PolicyName: 'IngestBronzeWritePolicy'
           PolicyDocument:
-            Version: '2010-09-09'
+            Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
@@ -205,13 +206,13 @@ Resources:
                 Resource:
                   - !Sub '${BronzeLayerBucket.Arn}/*'
 
-  # 2. ULOGA ZA TRANSFORM FUNKCIJU (Čitanje iz Bronze -> Pisanje/Brisanje u Silver)
+  # 2. TRANSFORMATION FUNCTION ROLE (Read from Bronze -> Write/Delete in Silver)
   TransformLambdaExecutionRole:
     Type: 'AWS::IAM::Role'
     Properties:
       RoleName: 'TransformLambdaExecutionRole'
       AssumeRolePolicyDocument:
-        Version: '2010-09-09'
+        Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
@@ -222,9 +223,9 @@ Resources:
       Policies:
         - PolicyName: 'TransformBronzeToSilverPolicy'
           PolicyDocument:
-            Version: '2010-09-09'
+            Version: '2012-10-17'
             Statement:
-              # Čitanje sa Bronze sloja
+              # Read access for Bronze layer
               - Effect: Allow
                 Action:
                   - 's3:GetObject'
@@ -232,7 +233,7 @@ Resources:
                 Resource:
                   - !GetAtt BronzeLayerBucket.Arn
                   - !Sub '${BronzeLayerBucket.Arn}/*'
-              # Pun pristup Silver sloju (potreban DeleteObject za awswrangler overwrite)
+              # Full access for Silver layer (DeleteObject required for awswrangler overwrite mode)
               - Effect: Allow
                 Action:
                   - 's3:GetObject'
@@ -243,13 +244,13 @@ Resources:
                   - !GetAtt SilverLayerBucket.Arn
                   - !Sub '${SilverLayerBucket.Arn}/*'
 
-  # 3. ULOGA ZA AGGREGATE FUNKCIJU (Čitanje iz Silver -> Pisanje/Brisanje u Gold)
+  # 3. AGGREGATION FUNCTION ROLE (Read from Silver -> Write/Delete in Gold)
   AggregateLambdaExecutionRole:
     Type: 'AWS::IAM::Role'
     Properties:
       RoleName: 'AggregateLambdaExecutionRole'
       AssumeRolePolicyDocument:
-        Version: '2010-09-09'
+        Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
@@ -260,9 +261,9 @@ Resources:
       Policies:
         - PolicyName: 'AggregateSilverToGoldPolicy'
           PolicyDocument:
-            Version: '2010-09-09'
+            Version: '2012-10-17'
             Statement:
-              # Čitanje sa Silver sloja
+              # Read access for Silver layer
               - Effect: Allow
                 Action:
                   - 's3:GetObject'
@@ -270,7 +271,7 @@ Resources:
                 Resource:
                   - !GetAtt SilverLayerBucket.Arn
                   - !Sub '${SilverLayerBucket.Arn}/*'
-              # Pun pristup Gold sloju za analitiku i snimanje JSON snapshot-a
+              # Full access for Gold layer analytics and data snapshot updates
               - Effect: Allow
                 Action:
                   - 's3:GetObject'

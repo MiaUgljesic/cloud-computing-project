@@ -19,7 +19,7 @@ Resources:
         - Key: Name
           Value: 'hacker-news-vpc'
 
-  # Internet Gateway (IGW) omogućava VPC-u komunikaciju sa internetom
+  # Internet Gateway (IGW) enables communication between the VPC and the internet
   InternetGateway:
     Type: 'AWS::EC2::InternetGateway'
     Properties:
@@ -27,14 +27,14 @@ Resources:
         - Key: Name
           Value: 'hacker-news-igw'
 
-  # Vezivanje Internet Gateway-a za naš VPC
+  # Attaching the Internet Gateway to our VPC
   VPCGatewayAttachment:
     Type: 'AWS::EC2::VPCGatewayAttachment'
     Properties:
       VpcId: !Ref DataPipelineVPC
       InternetGatewayId: !Ref InternetGateway
 
-  # JAVNA PODMREŽA (U njoj živi samo NAT Gateway)
+  # PUBLIC SUBNET (Hosts only the NAT Gateway)
   PublicSubnet:
     Type: 'AWS::EC2::Subnet'
     Properties:
@@ -46,7 +46,7 @@ Resources:
         - Key: Name
           Value: 'hacker-news-public-subnet'
 
-  # Jedna javna podmreža u kojoj će sve raditi na MiniStack-u
+  # Private Subnet where workload processing occurs (MiniStack compatible deployment zone)
   PrivateSubnet:
     Type: 'AWS::EC2::Subnet'
     Properties:
@@ -57,14 +57,14 @@ Resources:
         - Key: Name
           Value: 'hacker-news-private-subnet'
 
-  # Elastic IP (EIP) - Statička javna IP adresa koja je neophodna za NAT Gateway
+  # Elastic IP (EIP) - Static public IP address required by the NAT Gateway
   NatGatewayEIP:
     Type: 'AWS::EC2::EIP'
     DependsOn: VPCGatewayAttachment
     Properties:
       Domain: vpc
 
-  # NAT Gateway - Smešten u JAVNU podmrežu, prosleđuje saobraćaj iz privatne podmreže ka netu
+  # NAT Gateway - Deployed in the PUBLIC subnet, forwards outbound traffic from the private subnet to the internet
   NatGateway:
     Type: 'AWS::EC2::NatGateway'
     Properties:
@@ -74,9 +74,9 @@ Resources:
         - Key: Name
           Value: 'hacker-news-nat-gw'
 
-  # ==================== RUTE I TABELE RUTIRANJA ====================
+  # ==================== ROUTES & ROUTE TABLES ====================
 
-  # Tabela rutiranja za JAVNU podmrežu
+  # Route table for the PUBLIC subnet
   PublicRouteTable:
     Type: 'AWS::EC2::RouteTable'
     Properties:
@@ -85,7 +85,7 @@ Resources:
         - Key: Name
           Value: 'hacker-news-public-rt'
 
-  # Pravilo za javnu tabelu: Sav saobraćaj (0.0.0.0/0) šalji direktno na Internet Gateway
+  # Forward all outbound traffic (0.0.0.0/0) directly to the Internet Gateway
   PublicRoute:
     Type: 'AWS::EC2::Route'
     DependsOn: VPCGatewayAttachment
@@ -94,14 +94,14 @@ Resources:
       DestinationCidrBlock: '0.0.0.0/0'
       GatewayId: !Ref InternetGateway
 
-  # Povezivanje javne podmreže sa njenom tabelom rutiranja
+  # Associating the public subnet with its respective route table
   PublicSubnetRouteTableAssociation:
     Type: 'AWS::EC2::SubnetRouteTableAssociation'
     Properties:
       SubnetId: !Ref PublicSubnet
       RouteTableId: !Ref PublicRouteTable
 
-  # Tabela rutiranja za PRIVATNU podmrežu
+  # Route table for the PRIVATE subnet
   PrivateRouteTable:
     Type: 'AWS::EC2::RouteTable'
     Properties:
@@ -110,7 +110,7 @@ Resources:
         - Key: Name
           Value: 'hacker-news-private-rt'
 
-  # KLJUČNO PRAVILO: Sav izlazni saobraćaj (0.0.0.0/0) iz privatne podmreže šalji na NAT Gateway!
+  # Route all outbound internet traffic (0.0.0.0/0) from the private subnet through the NAT Gateway
   PrivateRoute:
     Type: 'AWS::EC2::Route'
     Properties:
@@ -118,7 +118,7 @@ Resources:
       DestinationCidrBlock: '0.0.0.0/0'
       NatGatewayId: !Ref NatGateway
 
-  # Povezivanje privatne podmreže sa njenom privatnom tabelom rutiranja
+  # Associating the private subnet with its respective private route table
   PrivateSubnetRouteTableAssociation:
     Type: 'AWS::EC2::SubnetRouteTableAssociation'
     Properties:
@@ -136,7 +136,7 @@ Resources:
           FromPort: 443
           ToPort: 443
           CidrIp: '0.0.0.0/0'
-          Description: 'Dozvoljen iskljucivo odlazni HTTPS saobracaj za API-je i S3 komunikaciju'
+          Description: 'Allows strictly outbound HTTPS traffic for third-party APIs and S3 communications'
       Tags:
         - Key: Name
           Value: 'hacker-news-lambda-sg'
@@ -152,7 +152,7 @@ Resources:
             Principal:
               Service: !Sub 'states.${AWS::Region}.amazonaws.com'
             Action: 'sts:AssumeRole'
-      RoleName: !Sub 'sfn-execution-role-${Environment}' # <-- EXPLICIT NAME FIXES LOCALSTACK BUG
+      RoleName: !Sub 'sfn-execution-role-${Environment}'
       Policies:
         - PolicyName: StateMachineLambdaInvokePolicy
           PolicyDocument:
@@ -167,6 +167,7 @@ Resources:
                   - !GetAtt TransformFunction.Arn
                   - !GetAtt AggregateFunction.Arn
                   
+
   # The Step Functions State Machine
   MedallionPipelineStateMachine:
     Type: 'AWS::StepFunctions::StateMachine'
@@ -276,7 +277,7 @@ Resources:
           Value: 'Gold'
 
   # ==================== IAM ROLES & POLICIES ====================
-  # 1. ULOGA ZA INGEST FUNKCIJE (Samo upis u Bronze)
+  # 1. INGESTION FUNCTION ROLE (Write access to Bronze layer only)
   IngestLambdaExecutionRole:
     Type: 'AWS::IAM::Role'
     Properties:
@@ -301,7 +302,7 @@ Resources:
                 Resource:
                   - !Sub '${BronzeLayerBucket.Arn}/*'
 
-  # 2. ULOGA ZA TRANSFORM FUNKCIJU (Čitanje iz Bronze -> Pisanje/Brisanje u Silver)
+  # 2. TRANSFORMATION FUNCTION ROLE (Read from Bronze -> Write/Delete in Silver)
   TransformLambdaExecutionRole:
     Type: 'AWS::IAM::Role'
     Properties:
@@ -320,7 +321,7 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # Čitanje sa Bronze sloja
+              # Read access for Bronze layer
               - Effect: Allow
                 Action:
                   - 's3:GetObject'
@@ -328,7 +329,7 @@ Resources:
                 Resource:
                   - !GetAtt BronzeLayerBucket.Arn
                   - !Sub '${BronzeLayerBucket.Arn}/*'
-              # Pun pristup Silver sloju (potreban DeleteObject za awswrangler overwrite)
+              # Full access for Silver layer (DeleteObject required for awswrangler overwrite mode)
               - Effect: Allow
                 Action:
                   - 's3:GetObject'
@@ -339,7 +340,7 @@ Resources:
                   - !GetAtt SilverLayerBucket.Arn
                   - !Sub '${SilverLayerBucket.Arn}/*'
 
-  # 3. ULOGA ZA AGGREGATE FUNKCIJU (Čitanje iz Silver -> Pisanje/Brisanje u Gold)
+  # 3. AGGREGATION FUNCTION ROLE (Read from Silver -> Write/Delete in Gold)
   AggregateLambdaExecutionRole:
     Type: 'AWS::IAM::Role'
     Properties:
@@ -358,7 +359,7 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # Čitanje sa Silver sloja
+              # Read access for Silver layer
               - Effect: Allow
                 Action:
                   - 's3:GetObject'
@@ -366,7 +367,7 @@ Resources:
                 Resource:
                   - !GetAtt SilverLayerBucket.Arn
                   - !Sub '${SilverLayerBucket.Arn}/*'
-              # Pun pristup Gold sloju za analitiku i snimanje JSON snapshot-a
+              # Full access for Gold layer analytics and reporting snapshots
               - Effect: Allow
                 Action:
                   - 's3:GetObject'

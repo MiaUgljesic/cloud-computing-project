@@ -1,16 +1,16 @@
 #!/bin/bash
 
-# ==================== KONFIGURACIJA ====================
-CODE_BUCKET="lambda-code-bucket-174435304073" # !!! Stavi isto ime kao iz template.yaml !!!
+# ==================== CONFIGURATION ====================
+CODE_BUCKET="lambda-code-bucket-174435304073"
 STACK_NAME="cloud-computing-pipeline-prod"
 REGION="eu-north-1"
 # =======================================================
 
-echo "[INFO] 1. Kreiranje S3 bucketa za kod (Artifact Bucket)..."
-aws s3 mb s3://$CODE_BUCKET --region $REGION || echo "[INFO] Bucket verovatno već postoji, nastavljamo..."
+echo "[INFO] 1. Creating S3 bucket for code deployment (Artifact Bucket)..."
+aws s3 mb s3://$CODE_BUCKET --region $REGION || echo "[INFO] Bucket might already exist, proceeding..."
 
-echo "[INFO] 2. Pakovanje Lambda funkcija u ZIP arhive..."
-# Ulazimo u folder sa lambdama, pakujemo ih i vraćamo zipove u koren projekta
+echo "[INFO] 2. Packaging Lambda functions into ZIP archives..."
+# Navigate into the lambdas directory, package them, and output the ZIPs to the project root
 cd lambdas
 zip ../hackerNewsIngest.zip hackerNewsIngest.py
 zip ../twitterIngest.zip twitterIngest.py
@@ -18,14 +18,14 @@ zip ../transform.zip transform.py
 zip ../aggregate.zip aggregate.py
 cd ..
 
-echo "[INFO] 3. Upload ZIP arhiva na AWS S3..."
+echo "[INFO] 3. Uploading ZIP archives to AWS S3..."
 aws s3 cp hackerNewsIngest.zip s3://$CODE_BUCKET/
 aws s3 cp twitterIngest.zip s3://$CODE_BUCKET/
 aws s3 cp transform.zip s3://$CODE_BUCKET/
 aws s3 cp aggregate.zip s3://$CODE_BUCKET/
 
-echo "[INFO] 4. Pokretanje CloudFormation Deployment-a..."
-# Ova komanda šalje tvoj template.yaml na AWS koji onda zida infrastrukturu
+echo "[INFO] 4. Executing CloudFormation Deployment..."
+# This command deploys your template.yaml file to AWS to provision the infrastructure resources
 aws cloudformation deploy \
   --template-file template.yaml \
   --stack-name $STACK_NAME \
@@ -33,4 +33,4 @@ aws cloudformation deploy \
   --region $REGION \
   --parameter-overrides Environment=prod
 
-echo "[USPEH] Sve je uspešno podignuto i postavljeno na AWS nalog!"
+echo "[SUCCESS] Pipeline infrastructure successfully provisioned and deployed to AWS!"

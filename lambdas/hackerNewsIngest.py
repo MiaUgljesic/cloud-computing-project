@@ -1,80 +1,113 @@
-import json
-import urllib.request
-import boto3
-import os
 import datetime
+import json
+import logging
+import os
+import urllib.request
+from datetime import datetime, timezone
+import boto3
 
-s3 = boto3.client('s3')
-# Extract the bucket name from the configured environment variables
+# Setup structured logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+s3_client = boto3.client('s3')
+
 BUCKET_NAME = os.environ.get("BRONZE_BUCKET_NAME", "bronze-layer-fallback")
 
+HN_BASE_URL = "https://hacker-news.firebaseio.com/v0"
+HN_ENDPOINTS = {
+    "story": f"{HN_BASE_URL}/newstories.json",
+    "ask": f"{HN_BASE_URL}/askstories.json",
+    "job": f"{HN_BASE_URL}/jobstories.json",
+    "show": f"{HN_BASE_URL}/showstories.json"
+}
 
-"""Helper function to fetch a single item from the Hacker News API"""
-def fetch_item(item_id):
-    url = f"https://hacker-news.firebaseio.com/v0/item/{item_id}.json"
+
+def _http_request(url: str) -> bytes | None:
+    """Helper function to perform HTTP GET requests safely with a custom User-Agent."""
     req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
     try:
         with urllib.request.urlopen(req) as response:
-            return json.loads(response.read().decode())
-    except Exception:
+            return response.read()
+    except Exception as e:
+        logger.warning(f"HTTP request failed for URL {url}: {str(e)}")
         return None
 
+
+def _fetch_item(item_id: int | str) -> dict | None:
+    """Fetches a single item (story, comment, etc.) from the Hacker News API."""
+    url = f"{HN_BASE_URL}/item/{item_id}.json"
+    response_data = _http_request(url)
+    
+    if response_data:
+        try:
+            return json.loads(response_data.decode())
+        except json.JSONDecodeError:
+            logger.error(f"Failed to decode JSON for item ID: {item_id}")
+    return None
+
+
 def lambda_handler(event, context):
-    print("[INFO] Starting Hacker News data ingestion pipeline...")
+    logger.info("Starting Hacker News data ingestion pipeline...")
     
     try:
-        endpoints = {
-            "story": "https://hacker-news.firebaseio.com/v0/newstories.json",
-            "ask": "https://hacker-news.firebaseio.com/v0/askstories.json",
-            "job": "https://hacker-news.firebaseio.com/v0/jobstories.json",
-            "show": "https://hacker-news.firebaseio.com/v0/showstories.json"
-        }
-        
         fetched_items = []
         comment_ids = []
         
-        # 1. Fetch all post types (limited to 15 per type to prevent Lambda Timeout)
-        for post_type, url in endpoints.items():
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req) as response:
-                ids = json.loads(response.read().decode())
+        # 1. Fetch item IDs from all endpoints (limited to 15 per type to prevent Lambda Timeout)
+        for post_type, url in HN_ENDPOINTS.items():
+            logger.info(f"Fetching latest IDs for type: {post_type}")
+            endpoint_data = _http_request(url)
+            
+            if not endpoint_data:
+                continue
                 
-            for item_id in ids[:15]:
-                item = fetch_item(item_id)
+            try:
+                item_ids = json.loads(endpoint_data.decode())
+            except json.JSONDecodeError:
+                logger.error(f"Failed to decode endpoint list for {post_type}")
+                continue
+            
+            # Fetch details for the first 15 items
+            for item_id in item_ids[:15]:
+                item = _fetch_item(item_id)
                 if item:
                     fetched_items.append(item)
-                    # Collect kids (comments)
+                    # Safely collect children (comments) - top 2 per story
                     if "kids" in item:
                         comment_ids.extend(item["kids"][:2])
 
-        # 2. Fetch the actual comment items
+        # 2. Fetch the actual comment items (capped at 20 overall)
+        logger.info(f"Collected {len(comment_ids)} total potential comments. Fetching top 20...")
         for cid in comment_ids[:20]:
-            comment = fetch_item(cid)
+            comment = _fetch_item(cid)
             if comment:
                 fetched_items.append(comment)
 
-        # 3. Upload raw data to S3 (Bronze Layer)
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        # 3. Upload aggregated raw data to S3 (Bronze Layer)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         s3_key = f"hacker_news/raw_stories_{timestamp}.json"
         
-        s3.put_object(
+        logger.info(f"Uploading {len(fetched_items)} objects to S3 bucket: {BUCKET_NAME}")
+        
+        s3_client.put_object(
             Bucket=BUCKET_NAME,
             Key=s3_key,
             Body=json.dumps(fetched_items, indent=4)
         )
         
-        success_message = f"[SUCCESS] Successfully ingested {len(fetched_items)} HN objects (stories, asks, jobs, comments)."
-        print(success_message)
+        success_msg = f"Successfully ingested {len(fetched_items)} HN objects (stories, asks, jobs, comments)."
+        logger.info(success_msg)
         
         return {
             'statusCode': 200,
             'body': {
-                'message': success_message,
+                'message': success_msg,
                 'file_key': s3_key,
                 'bucket': BUCKET_NAME
             }
         }
         
     except Exception as e:
-        print(f"[ERROR] Ingestion failed: {str(e)}")
+        logger.error(f"Ingestion failed: {str(e)}", exc_info=True)
         raise e
