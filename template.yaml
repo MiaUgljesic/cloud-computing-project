@@ -1,0 +1,522 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Hacker News Data Pipeline Infrastructure - MiniStack Compatible'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: 'dev'
+    Description: 'Environment name'
+
+Resources:
+  # ==================== VPC & NETWORKING ====================
+  DataPipelineVPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: '10.0.0.0/16'
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: 'hacker-news-vpc'
+
+  # Internet Gateway (IGW) enables communication between the VPC and the internet
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Properties:
+      Tags:
+        - Key: Name
+          Value: 'hacker-news-igw'
+
+  # Attaching the Internet Gateway to our VPC
+  VPCGatewayAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref DataPipelineVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # PUBLIC SUBNET (Hosts only the NAT Gateway)
+  PublicSubnet:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref DataPipelineVPC
+      CidrBlock: '10.0.10.0/24'
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: 'hacker-news-public-subnet'
+
+  # Private Subnet where workload processing occurs (MiniStack compatible deployment zone)
+  PrivateSubnet:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref DataPipelineVPC
+      CidrBlock: '10.0.1.0/24'
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: 'hacker-news-private-subnet'
+
+  # Elastic IP (EIP) - Static public IP address required by the NAT Gateway
+  NatGatewayEIP:
+    Type: 'AWS::EC2::EIP'
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  # NAT Gateway - Deployed in the PUBLIC subnet, forwards outbound traffic from the private subnet to the internet
+  NatGateway:
+    Type: 'AWS::EC2::NatGateway'
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: 'hacker-news-nat-gw'
+
+  # ==================== ROUTES & ROUTE TABLES ====================
+
+  # Route table for the PUBLIC subnet
+  PublicRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref DataPipelineVPC
+      Tags:
+        - Key: Name
+          Value: 'hacker-news-public-rt'
+
+  # Forward all outbound traffic (0.0.0.0/0) directly to the Internet Gateway
+  PublicRoute:
+    Type: 'AWS::EC2::Route'
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref InternetGateway
+
+  # Associating the public subnet with its respective route table
+  PublicSubnetRouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  # Route table for the PRIVATE subnet
+  PrivateRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref DataPipelineVPC
+      Tags:
+        - Key: Name
+          Value: 'hacker-news-private-rt'
+
+  # Route all outbound internet traffic (0.0.0.0/0) from the private subnet through the NAT Gateway
+  PrivateRoute:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGateway
+
+  # Associating the private subnet with its respective private route table
+  PrivateSubnetRouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+  # ==================== SECURITY GROUPS ====================
+  LambdaSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Security group for Hacker News Lambda functions'
+      VpcId: !Ref DataPipelineVPC
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: '0.0.0.0/0'
+          Description: 'Allows strictly outbound HTTPS traffic for third-party APIs and S3 communications'
+      Tags:
+        - Key: Name
+          Value: 'hacker-news-lambda-sg'
+
+  # IAM Role for Step Functions Execution
+  StateMachineExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: !Sub 'states.${AWS::Region}.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      RoleName: !Sub 'sfn-execution-role-${Environment}'
+      Policies:
+        - PolicyName: StateMachineLambdaInvokePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'lambda:InvokeFunction'
+                Resource:
+                  - !GetAtt HackerNewsIngestFunction.Arn
+                  - !GetAtt TwitterIngestFunction.Arn
+                  - !GetAtt TransformFunction.Arn
+                  - !GetAtt AggregateFunction.Arn
+                  
+
+  # The Step Functions State Machine
+  MedallionPipelineStateMachine:
+    Type: 'AWS::StepFunctions::StateMachine'
+    Properties:
+      StateMachineName: !Sub 'medallion-pipeline-orchestrator-${Environment}'
+      RoleArn: !GetAtt StateMachineExecutionRole.Arn
+      # FOOLPROOF LOCALSTACK METHOD: Raw JSON block with variable substitution
+      DefinitionString: !Sub |
+        {
+          "Comment": "Medallion Architecture Data Pipeline Orchestrator",
+          "StartAt": "Parallel_Ingestion",
+          "States": {
+            "Parallel_Ingestion": {
+              "Type": "Parallel",
+              "Next": "TransformToSilver",
+              "ResultPath": "$.IngestResults",
+              "Branches": [
+                {
+                  "StartAt": "IngestHackerNews",
+                  "States": {
+                    "IngestHackerNews": {
+                      "Type": "Task",
+                      "Resource": "${HackerNewsIngestFunction.Arn}",
+                      "End": true
+                    }
+                  }
+                },
+                {
+                  "StartAt": "IngestTwitter",
+                  "States": {
+                    "IngestTwitter": {
+                      "Type": "Task",
+                      "Resource": "${TwitterIngestFunction.Arn}",
+                      "End": true
+                    }
+                  }
+                }
+              ]
+            },
+            "TransformToSilver": {
+              "Type": "Task",
+              "Resource": "${TransformFunction.Arn}",
+              "Parameters": {
+                "HNFileKey.$": "$.IngestResults[0].body.file_key",
+                "TwitterFileKey.$": "$.IngestResults[1].body.file_key"
+              },
+              "ResultPath": "$.TransformResult",
+              "Next": "AggregateToGold"
+            },
+            "AggregateToGold": {
+              "Type": "Task",
+              "Resource": "${AggregateFunction.Arn}",
+              "Parameters": {
+                "SilverFileKey.$": "$.TransformResult.body.file_key"
+              },
+              "End": true
+            }
+          }
+        }
+  # ==================== S3 BUCKETS ====================
+  # Bronze S3 Bucket - Raw data layer
+  BronzeLayerBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Sub 'bronze-layer-${AWS::AccountId}-${Environment}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Layer
+          Value: 'Bronze'
+
+  # Silver S3 Bucket - Cleaned/transformed data layer
+  SilverLayerBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Sub 'silver-layer-${AWS::AccountId}-${Environment}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Layer
+          Value: 'Silver'
+
+  # Gold S3 Bucket - Analytics/insights layer
+  GoldLayerBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Sub 'gold-layer-${AWS::AccountId}-${Environment}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Layer
+          Value: 'Gold'
+
+  # ==================== IAM ROLES & POLICIES ====================
+  # 1. INGESTION FUNCTION ROLE (Write access to Bronze layer only)
+  IngestLambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: 'IngestLambdaExecutionRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 'lambda.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+      Policies:
+        - PolicyName: 'IngestBronzeWritePolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                Resource:
+                  - !Sub '${BronzeLayerBucket.Arn}/*'
+
+  # 2. TRANSFORMATION FUNCTION ROLE (Read from Bronze -> Write/Delete in Silver)
+  TransformLambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: 'TransformLambdaExecutionRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 'lambda.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+      Policies:
+        - PolicyName: 'TransformBronzeToSilverPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Read access for Bronze layer
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:ListBucket'
+                Resource:
+                  - !GetAtt BronzeLayerBucket.Arn
+                  - !Sub '${BronzeLayerBucket.Arn}/*'
+              # Full access for Silver layer (DeleteObject required for awswrangler overwrite mode)
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:DeleteObject'
+                  - 's3:ListBucket'
+                Resource:
+                  - !GetAtt SilverLayerBucket.Arn
+                  - !Sub '${SilverLayerBucket.Arn}/*'
+
+  # 3. AGGREGATION FUNCTION ROLE (Read from Silver -> Write/Delete in Gold)
+  AggregateLambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: 'AggregateLambdaExecutionRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 'lambda.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+      Policies:
+        - PolicyName: 'AggregateSilverToGoldPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Read access for Silver layer
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:ListBucket'
+                Resource:
+                  - !GetAtt SilverLayerBucket.Arn
+                  - !Sub '${SilverLayerBucket.Arn}/*'
+              # Full access for Gold layer analytics and reporting snapshots
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:DeleteObject'
+                  - 's3:ListBucket'
+                Resource:
+                  - !GetAtt GoldLayerBucket.Arn
+                  - !Sub '${GoldLayerBucket.Arn}/*'
+
+  # ==================== LAMBDA FUNCTIONS ====================
+
+  # Lambda 1.1: Ingestion Function (Bronze Layer)
+  HackerNewsIngestFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: 'HackerNewsIngestFunction'
+      Handler: 'hackerNewsIngest.lambda_handler'
+      Role: !GetAtt IngestLambdaExecutionRole.Arn
+      Runtime: 'python3.11'
+      Timeout: 300
+      MemorySize: 512
+      Code:
+        S3Bucket: 'lambda-code-bucket-174435304073'
+        S3Key: 'hackerNewsIngest.zip'
+      Environment:
+        Variables:
+          BRONZE_BUCKET_NAME: !Ref BronzeLayerBucket
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet
+      Tags:
+        - Key: Layer
+          Value: 'Bronze'
+
+  # Lambda 1.2: X (Twitter) Ingestion Function
+  TwitterIngestFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: 'TwitterIngestFunction'
+      Handler: 'twitterIngest.lambda_handler'
+      Role: !GetAtt IngestLambdaExecutionRole.Arn
+      Runtime: 'python3.11'
+      Timeout: 300
+      MemorySize: 512
+      Code:
+        S3Bucket: 'lambda-code-bucket-174435304073'
+        S3Key: 'twitterIngest.zip'
+      Environment:
+        Variables:
+          BRONZE_BUCKET_NAME: !Ref BronzeLayerBucket
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet
+
+  # Lambda 2: Transformation Function (Silver Layer)
+  TransformFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: 'TransformFunction'
+      Handler: 'transform.lambda_handler'
+      Role: !GetAtt TransformLambdaExecutionRole.Arn
+      Runtime: 'python3.11'
+      Timeout: 300
+      MemorySize: 512
+      Layers:
+        - 'arn:aws:lambda:eu-north-1:336392948345:layer:AWSSDKPandas-Python311:12'
+      Code:
+        S3Bucket: 'lambda-code-bucket-174435304073'
+        S3Key: 'transform.zip'
+      Environment:
+        Variables:
+          BRONZE_BUCKET_NAME: !Ref BronzeLayerBucket
+          SILVER_BUCKET_NAME: !Ref SilverLayerBucket
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet
+      Tags:
+        - Key: Layer
+          Value: 'Silver'
+
+  # Lambda 3: Aggregation Function (Gold Layer)
+  AggregateFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: 'AggregateFunction'
+      Handler: 'aggregate.lambda_handler'
+      Role: !GetAtt AggregateLambdaExecutionRole.Arn
+      Runtime: 'python3.11'
+      Timeout: 300
+      MemorySize: 512
+      Layers:
+        - 'arn:aws:lambda:eu-north-1:336392948345:layer:AWSSDKPandas-Python311:12'
+      Code:
+        S3Bucket: 'lambda-code-bucket-174435304073'
+        S3Key: 'aggregate.zip'
+      Environment:
+        Variables:
+          SILVER_BUCKET_NAME: !Ref SilverLayerBucket
+          GOLD_BUCKET_NAME: !Ref GoldLayerBucket
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet
+      Tags:
+        - Key: Layer
+          Value: 'Gold'
+
+# ==================== OUTPUTS ====================
+Outputs:
+  VPCId:
+    Description: 'VPC ID for the data pipeline'
+    Value: !Ref DataPipelineVPC
+    Export:
+      Name: !Sub '${AWS::StackName}-VPC-ID'
+
+  PrivateSubnetId:
+    Description: 'Private subnet for Lambda functions'
+    Value: !Ref PrivateSubnet
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnet-ID'
+
+  LambdaSecurityGroupId:
+    Description: 'Security group ID for Lambda functions'
+    Value: !Ref LambdaSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaSG-ID'
+
+  BronzeBucketArn:
+    Description: 'ARN of Bronze Layer bucket'
+    Value: !GetAtt BronzeLayerBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-BronzeBucket'
+
+  SilverBucketArn:
+    Description: 'ARN of Silver Layer bucket'
+    Value: !GetAtt SilverLayerBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-SilverBucket'
+
+  GoldBucketArn:
+    Description: 'ARN of Gold Layer bucket'
+    Value: !GetAtt GoldLayerBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-GoldBucket'
