@@ -7,6 +7,39 @@ Parameters:
     Default: 'dev'
     Description: 'Environment name'
 
+  AnalyticsEC2InstanceType:
+    Type: String
+    Default: 't3.medium'
+    Description: 'Instance type for the EC2 host running PostgreSQL + Apache Superset (Superset needs at least 2 vCPU / 4GB RAM)'
+
+  AllowedSupersetCidr:
+    Type: String
+    Default: '0.0.0.0/0'
+    Description: 'CIDR allowed to reach the Superset UI on port 8088. Restrict this to your own IP (e.g. 203.0.113.4/32) before deploying to a real AWS account.'
+
+  DBPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: 'Password for the PostgreSQL analytics_user, used by both the EC2-hosted Postgres and the LoadToPostgres Lambda'
+
+  SupersetAdminPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: 'Password for the Superset admin account created on first boot'
+
+  SupersetSecretKey:
+    Type: String
+    NoEcho: true
+    MinLength: 16
+    Description: 'SUPERSET_SECRET_KEY used to sign sessions/cookies (any random 16+ char string)'
+
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64'
+    Description: 'Resolved automatically to the latest Amazon Linux 2023 AMI for the region - do not override'
+
 Resources:
   # ==================== VPC & NETWORKING ====================
   DataPipelineVPC:
@@ -141,6 +174,42 @@ Resources:
         - Key: Name
           Value: 'hacker-news-lambda-sg'
 
+  # Security group for the EC2 instance hosting PostgreSQL + Apache Superset
+  AnalyticsEC2SecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Security group for the PostgreSQL + Superset analytics EC2 instance'
+      VpcId: !Ref DataPipelineVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8088
+          ToPort: 8088
+          CidrIp: !Ref AllowedSupersetCidr
+          Description: 'Superset web UI'
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+          Description: 'PostgreSQL access restricted to the pipeline Lambda functions'
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: '0.0.0.0/0'
+          Description: 'Allow outbound for docker image pulls and package installs'
+      Tags:
+        - Key: Name
+          Value: 'analytics-postgres-superset-sg'
+
+  # Explicit egress rule so Lambdas in LambdaSecurityGroup can reach Postgres on the analytics EC2 instance
+  LambdaToPostgresEgress:
+    Type: 'AWS::EC2::SecurityGroupEgress'
+    Properties:
+      GroupId: !Ref LambdaSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      DestinationSecurityGroupId: !Ref AnalyticsEC2SecurityGroup
+      Description: 'Allow LoadToPostgres Lambda to reach the analytics EC2 instance'
+
   # IAM Role for Step Functions Execution
   StateMachineExecutionRole:
     Type: 'AWS::IAM::Role'
@@ -166,6 +235,7 @@ Resources:
                   - !GetAtt TwitterIngestFunction.Arn
                   - !GetAtt TransformFunction.Arn
                   - !GetAtt AggregateFunction.Arn
+                  - !GetAtt LoadToPostgresFunction.Arn
                   
 
   # The Step Functions State Machine
@@ -222,6 +292,15 @@ Resources:
               "Resource": "${AggregateFunction.Arn}",
               "Parameters": {
                 "SilverFileKey.$": "$.TransformResult.body.file_key"
+              },
+              "ResultPath": "$.AggregateResult",
+              "Next": "LoadToPostgres"
+            },
+            "LoadToPostgres": {
+              "Type": "Task",
+              "Resource": "${LoadToPostgresFunction.Arn}",
+              "Parameters": {
+                "ReportKey.$": "$.AggregateResult.body.gold_json_report"
               },
               "End": true
             }
@@ -378,6 +457,121 @@ Resources:
                   - !GetAtt GoldLayerBucket.Arn
                   - !Sub '${GoldLayerBucket.Arn}/*'
 
+  # 4. LOAD-TO-POSTGRES FUNCTION ROLE (Read-only from Gold layer; network access to the analytics EC2 instance)
+  LoadToPostgresLambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: 'LoadToPostgresLambdaExecutionRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 'lambda.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+      Policies:
+        - PolicyName: 'LoadToPostgresGoldReadPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:ListBucket'
+                Resource:
+                  - !GetAtt GoldLayerBucket.Arn
+                  - !Sub '${GoldLayerBucket.Arn}/*'
+
+  # ==================== EC2 ANALYTICS HOST (PostgreSQL + Apache Superset) ====================
+
+  # IAM role for the EC2 instance - only needs SSM for shell access, no SSH key/bastion required
+  AnalyticsEC2Role:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub 'analytics-ec2-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 'ec2.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+
+  AnalyticsEC2InstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Roles:
+        - !Ref AnalyticsEC2Role
+
+  AnalyticsEC2Instance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: !Ref AnalyticsEC2InstanceType
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref PublicSubnet
+      IamInstanceProfile: !Ref AnalyticsEC2InstanceProfile
+      SecurityGroupIds:
+        - !Ref AnalyticsEC2SecurityGroup
+      Tags:
+        - Key: Name
+          Value: 'analytics-postgres-superset'
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -eux
+          dnf update -y
+          dnf install -y docker
+          systemctl enable docker
+          systemctl start docker
+          usermod -a -G docker ec2-user
+
+          curl -SL "https://github.com/docker/compose/releases/download/v2.29.2/docker-compose-linux-x86_64" -o /usr/local/bin/docker-compose
+          chmod +x /usr/local/bin/docker-compose
+
+          mkdir -p /opt/analytics
+          cat > /opt/analytics/docker-compose.yml << 'COMPOSE_EOF'
+          version: '3.8'
+          services:
+            postgres:
+              image: postgres:15
+              restart: always
+              environment:
+                POSTGRES_USER: analytics_user
+                POSTGRES_PASSWORD: "${DBPassword}"
+                POSTGRES_DB: gold_analytics
+              ports:
+                - "5432:5432"
+              volumes:
+                - pgdata:/var/lib/postgresql/data
+
+            superset:
+              image: apache/superset:latest
+              restart: always
+              depends_on:
+                - postgres
+              ports:
+                - "8088:8088"
+              environment:
+                SUPERSET_SECRET_KEY: "${SupersetSecretKey}"
+              command: >
+                /bin/sh -c "
+                pip install psycopg2-binary &&
+                superset db upgrade &&
+                (superset fab create-admin --username admin --firstname Admin --lastname User --email admin@example.com --password '${SupersetAdminPassword}' || true) &&
+                superset init &&
+                /usr/bin/run-server.sh"
+
+          volumes:
+            pgdata:
+          COMPOSE_EOF
+
+          cd /opt/analytics
+          /usr/local/bin/docker-compose up -d
+
   # ==================== LAMBDA FUNCTIONS ====================
 
   # Lambda 1.1: Ingestion Function (Bronze Layer)
@@ -483,6 +677,39 @@ Resources:
         - Key: Layer
           Value: 'Gold'
 
+  # Lambda 4: Load-to-Postgres Function (Gold layer -> PostgreSQL on the analytics EC2 instance, for Superset)
+  LoadToPostgresFunction:
+    Type: 'AWS::Lambda::Function'
+    DependsOn: AnalyticsEC2Instance
+    Properties:
+      FunctionName: 'LoadToPostgresFunction'
+      Handler: 'loadToPostgres.lambda_handler'
+      Role: !GetAtt LoadToPostgresLambdaExecutionRole.Arn
+      Runtime: 'python3.11'
+      Timeout: 120
+      MemorySize: 512
+      Layers:
+        - 'arn:aws:lambda:eu-north-1:336392948345:layer:AWSSDKPandas-Python311:12'
+      Code:
+        S3Bucket: 'lambda-code-bucket-174435304073'
+        S3Key: 'loadToPostgres.zip'
+      Environment:
+        Variables:
+          GOLD_BUCKET_NAME: !Ref GoldLayerBucket
+          DB_HOST: !GetAtt AnalyticsEC2Instance.PrivateIp
+          DB_PORT: '5432'
+          DB_NAME: 'gold_analytics'
+          DB_USER: 'analytics_user'
+          DB_PASSWORD: !Ref DBPassword
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet
+      Tags:
+        - Key: Layer
+          Value: 'Gold'
+
 # ==================== OUTPUTS ====================
 Outputs:
   VPCId:
@@ -520,3 +747,11 @@ Outputs:
     Value: !GetAtt GoldLayerBucket.Arn
     Export:
       Name: !Sub '${AWS::StackName}-GoldBucket'
+
+  SupersetURL:
+    Description: 'Apache Superset UI (allow a few minutes after stack creation for docker-compose to finish pulling images)'
+    Value: !Sub 'http://${AnalyticsEC2Instance.PublicIp}:8088'
+
+  AnalyticsPostgresPrivateIp:
+    Description: 'Private IP of the PostgreSQL host, used by LoadToPostgresFunction'
+    Value: !GetAtt AnalyticsEC2Instance.PrivateIp

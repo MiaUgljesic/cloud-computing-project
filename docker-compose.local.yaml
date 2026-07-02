@@ -1,0 +1,55 @@
+version: '3.8'
+
+# Standalone local stack for testing the Visualization layer (KORAK 4 iz specifikacije)
+# without needing a real EC2 instance. Run with:
+#   docker compose -f docker-compose.local.yml up -d
+#
+# Superset UI:      http://localhost:8088  (admin / admin - see SUPERSET admin creds below)
+# Postgres:         localhost:5432 (analytics_user / analytics_pass / gold_analytics)
+#
+# IMPORTANT: both services are attached to the external "pipeline-net" network so that
+# LocalStack's Lambda containers (LoadToPostgresFunction) can reach postgres by hostname.
+# Create the network once with:  docker network create pipeline-net
+
+networks:
+  pipeline-net:
+    external: true
+
+services:
+  postgres-local:
+    image: postgres:15
+    container_name: postgres-local
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: analytics_user
+      POSTGRES_PASSWORD: analytics_pass
+      POSTGRES_DB: gold_analytics
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata-local:/var/lib/postgresql/data
+    networks:
+      - pipeline-net
+
+  superset-local:
+    image: apache/superset:latest
+    container_name: superset-local
+    restart: unless-stopped
+    depends_on:
+      - postgres-local
+    ports:
+      - "8088:8088"
+    environment:
+      SUPERSET_SECRET_KEY: "local-dev-secret-key-change-me"
+    command: >
+      /bin/sh -c "
+      pip install psycopg2-binary &&
+      superset db upgrade &&
+      (superset fab create-admin --username admin --firstname Admin --lastname User --email admin@example.com --password admin || true) &&
+      superset init &&
+      /usr/bin/run-server.sh"
+    networks:
+      - pipeline-net
+
+volumes:
+  pgdata-local:
