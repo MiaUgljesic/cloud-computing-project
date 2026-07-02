@@ -125,6 +125,11 @@ def _replace_day(con, table_name: str, report_date: str, df: pd.DataFrame) -> No
         cur.execute(f"DELETE FROM {table_name} WHERE report_date = %s", (report_date,))
     con.commit()
 
+    for col in df.columns:
+    # Ako je kolona tipa float, pokušaj konverziju u int (nakon popunjavanja NaN sa 0)
+        if df[col].dtype == 'float64':
+            df[col] = df[col].fillna(0).astype(int)
+
     wr.postgresql.to_sql(
         df=df,
         con=con,

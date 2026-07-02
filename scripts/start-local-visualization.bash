@@ -7,7 +7,7 @@ echo "[INFO] Ensuring shared docker network 'pipeline-net' exists..."
 docker network create pipeline-net 2>/dev/null || echo "[INFO] Network already exists, continuing..."
 
 echo "[INFO] Starting local Postgres + Superset (docker-compose.local.yml)..."
-docker compose -f docker-compose.local.yml up -d
+docker compose -f docker-compose.local.yaml up -d
 
 echo ""
 echo "[SUCCESS] Postgres is on localhost:5432 (analytics_user/analytics_pass/gold_analytics)."

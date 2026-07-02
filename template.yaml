@@ -9,8 +9,8 @@ Parameters:
 
   AnalyticsEC2InstanceType:
     Type: String
-    Default: 't3.medium'
-    Description: 'Instance type for the EC2 host running PostgreSQL + Apache Superset (Superset needs at least 2 vCPU / 4GB RAM)'
+    Default: 't3.micro'
+    Description: 'Free Tier eligible instance type (e.g., t3.micro in eu-north-1 or t2.micro in us-east-1). Swap space is configured on startup.'
 
   AllowedSupersetCidr:
     Type: String
@@ -52,7 +52,6 @@ Resources:
         - Key: Name
           Value: 'hacker-news-vpc'
 
-  # Internet Gateway (IGW) enables communication between the VPC and the internet
   InternetGateway:
     Type: 'AWS::EC2::InternetGateway'
     Properties:
@@ -60,14 +59,12 @@ Resources:
         - Key: Name
           Value: 'hacker-news-igw'
 
-  # Attaching the Internet Gateway to our VPC
   VPCGatewayAttachment:
     Type: 'AWS::EC2::VPCGatewayAttachment'
     Properties:
       VpcId: !Ref DataPipelineVPC
       InternetGatewayId: !Ref InternetGateway
 
-  # PUBLIC SUBNET (Hosts only the NAT Gateway)
   PublicSubnet:
     Type: 'AWS::EC2::Subnet'
     Properties:
@@ -79,7 +76,6 @@ Resources:
         - Key: Name
           Value: 'hacker-news-public-subnet'
 
-  # Private Subnet where workload processing occurs (MiniStack compatible deployment zone)
   PrivateSubnet:
     Type: 'AWS::EC2::Subnet'
     Properties:
@@ -90,14 +86,12 @@ Resources:
         - Key: Name
           Value: 'hacker-news-private-subnet'
 
-  # Elastic IP (EIP) - Static public IP address required by the NAT Gateway
   NatGatewayEIP:
     Type: 'AWS::EC2::EIP'
     DependsOn: VPCGatewayAttachment
     Properties:
       Domain: vpc
 
-  # NAT Gateway - Deployed in the PUBLIC subnet, forwards outbound traffic from the private subnet to the internet
   NatGateway:
     Type: 'AWS::EC2::NatGateway'
     Properties:
@@ -108,8 +102,6 @@ Resources:
           Value: 'hacker-news-nat-gw'
 
   # ==================== ROUTES & ROUTE TABLES ====================
-
-  # Route table for the PUBLIC subnet
   PublicRouteTable:
     Type: 'AWS::EC2::RouteTable'
     Properties:
@@ -118,7 +110,6 @@ Resources:
         - Key: Name
           Value: 'hacker-news-public-rt'
 
-  # Forward all outbound traffic (0.0.0.0/0) directly to the Internet Gateway
   PublicRoute:
     Type: 'AWS::EC2::Route'
     DependsOn: VPCGatewayAttachment
@@ -127,14 +118,12 @@ Resources:
       DestinationCidrBlock: '0.0.0.0/0'
       GatewayId: !Ref InternetGateway
 
-  # Associating the public subnet with its respective route table
   PublicSubnetRouteTableAssociation:
     Type: 'AWS::EC2::SubnetRouteTableAssociation'
     Properties:
       SubnetId: !Ref PublicSubnet
       RouteTableId: !Ref PublicRouteTable
 
-  # Route table for the PRIVATE subnet
   PrivateRouteTable:
     Type: 'AWS::EC2::RouteTable'
     Properties:
@@ -143,7 +132,6 @@ Resources:
         - Key: Name
           Value: 'hacker-news-private-rt'
 
-  # Route all outbound internet traffic (0.0.0.0/0) from the private subnet through the NAT Gateway
   PrivateRoute:
     Type: 'AWS::EC2::Route'
     Properties:
@@ -151,7 +139,6 @@ Resources:
       DestinationCidrBlock: '0.0.0.0/0'
       NatGatewayId: !Ref NatGateway
 
-  # Associating the private subnet with its respective private route table
   PrivateSubnetRouteTableAssociation:
     Type: 'AWS::EC2::SubnetRouteTableAssociation'
     Properties:
@@ -174,7 +161,6 @@ Resources:
         - Key: Name
           Value: 'hacker-news-lambda-sg'
 
-  # Security group for the EC2 instance hosting PostgreSQL + Apache Superset
   AnalyticsEC2SecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
@@ -199,7 +185,6 @@ Resources:
         - Key: Name
           Value: 'analytics-postgres-superset-sg'
 
-  # Explicit egress rule so Lambdas in LambdaSecurityGroup can reach Postgres on the analytics EC2 instance
   LambdaToPostgresEgress:
     Type: 'AWS::EC2::SecurityGroupEgress'
     Properties:
@@ -236,7 +221,6 @@ Resources:
                   - !GetAtt TransformFunction.Arn
                   - !GetAtt AggregateFunction.Arn
                   - !GetAtt LoadToPostgresFunction.Arn
-                  
 
   # The Step Functions State Machine
   MedallionPipelineStateMachine:
@@ -244,7 +228,6 @@ Resources:
     Properties:
       StateMachineName: !Sub 'medallion-pipeline-orchestrator-${Environment}'
       RoleArn: !GetAtt StateMachineExecutionRole.Arn
-      # FOOLPROOF LOCALSTACK METHOD: Raw JSON block with variable substitution
       DefinitionString: !Sub |
         {
           "Comment": "Medallion Architecture Data Pipeline Orchestrator",
@@ -306,8 +289,8 @@ Resources:
             }
           }
         }
+
   # ==================== S3 BUCKETS ====================
-  # Bronze S3 Bucket - Raw data layer
   BronzeLayerBucket:
     Type: 'AWS::S3::Bucket'
     Properties:
@@ -323,7 +306,6 @@ Resources:
         - Key: Layer
           Value: 'Bronze'
 
-  # Silver S3 Bucket - Cleaned/transformed data layer
   SilverLayerBucket:
     Type: 'AWS::S3::Bucket'
     Properties:
@@ -339,7 +321,6 @@ Resources:
         - Key: Layer
           Value: 'Silver'
 
-  # Gold S3 Bucket - Analytics/insights layer
   GoldLayerBucket:
     Type: 'AWS::S3::Bucket'
     Properties:
@@ -356,7 +337,6 @@ Resources:
           Value: 'Gold'
 
   # ==================== IAM ROLES & POLICIES ====================
-  # 1. INGESTION FUNCTION ROLE (Write access to Bronze layer only)
   IngestLambdaExecutionRole:
     Type: 'AWS::IAM::Role'
     Properties:
@@ -381,7 +361,6 @@ Resources:
                 Resource:
                   - !Sub '${BronzeLayerBucket.Arn}/*'
 
-  # 2. TRANSFORMATION FUNCTION ROLE (Read from Bronze -> Write/Delete in Silver)
   TransformLambdaExecutionRole:
     Type: 'AWS::IAM::Role'
     Properties:
@@ -400,7 +379,6 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # Read access for Bronze layer
               - Effect: Allow
                 Action:
                   - 's3:GetObject'
@@ -408,7 +386,6 @@ Resources:
                 Resource:
                   - !GetAtt BronzeLayerBucket.Arn
                   - !Sub '${BronzeLayerBucket.Arn}/*'
-              # Full access for Silver layer (DeleteObject required for awswrangler overwrite mode)
               - Effect: Allow
                 Action:
                   - 's3:GetObject'
@@ -419,7 +396,6 @@ Resources:
                   - !GetAtt SilverLayerBucket.Arn
                   - !Sub '${SilverLayerBucket.Arn}/*'
 
-  # 3. AGGREGATION FUNCTION ROLE (Read from Silver -> Write/Delete in Gold)
   AggregateLambdaExecutionRole:
     Type: 'AWS::IAM::Role'
     Properties:
@@ -438,7 +414,6 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # Read access for Silver layer
               - Effect: Allow
                 Action:
                   - 's3:GetObject'
@@ -446,7 +421,6 @@ Resources:
                 Resource:
                   - !GetAtt SilverLayerBucket.Arn
                   - !Sub '${SilverLayerBucket.Arn}/*'
-              # Full access for Gold layer analytics and reporting snapshots
               - Effect: Allow
                 Action:
                   - 's3:GetObject'
@@ -457,7 +431,6 @@ Resources:
                   - !GetAtt GoldLayerBucket.Arn
                   - !Sub '${GoldLayerBucket.Arn}/*'
 
-  # 4. LOAD-TO-POSTGRES FUNCTION ROLE (Read-only from Gold layer; network access to the analytics EC2 instance)
   LoadToPostgresLambdaExecutionRole:
     Type: 'AWS::IAM::Role'
     Properties:
@@ -484,9 +457,7 @@ Resources:
                   - !GetAtt GoldLayerBucket.Arn
                   - !Sub '${GoldLayerBucket.Arn}/*'
 
-  # ==================== EC2 ANALYTICS HOST (PostgreSQL + Apache Superset) ====================
-
-  # IAM role for the EC2 instance - only needs SSM for shell access, no SSH key/bastion required
+  # ==================== EC2 ANALYTICS HOST ====================
   AnalyticsEC2Role:
     Type: 'AWS::IAM::Role'
     Properties:
@@ -523,15 +494,26 @@ Resources:
         Fn::Base64: !Sub |
           #!/bin/bash
           set -eux
+          
+          # 1. Kreiranje 4GB Swap fajla (Ključno za stabilan rad Docker-a i Superseta na 1GB RAM-a)
+          dd if=/dev/zero of=/swapfile bs=1M count=4096
+          chmod 600 /swapfile
+          mkswap /swapfile
+          swapon /swapfile
+          echo "/swapfile none swap sw 0 0" >> /etc/fstab
+
+          # 2. Instalacija Docker-a i konfigurisanje servisa
           dnf update -y
           dnf install -y docker
           systemctl enable docker
           systemctl start docker
           usermod -a -G docker ec2-user
 
+          # 3. Instalacija Docker Compose-a
           curl -SL "https://github.com/docker/compose/releases/download/v2.29.2/docker-compose-linux-x86_64" -o /usr/local/bin/docker-compose
           chmod +x /usr/local/bin/docker-compose
 
+          # 4. Generisanje lokalnog docker-compose.yml za PostgreSQL i Apache Superset
           mkdir -p /opt/analytics
           cat > /opt/analytics/docker-compose.yml << 'COMPOSE_EOF'
           version: '3.8'
@@ -558,8 +540,7 @@ Resources:
               environment:
                 SUPERSET_SECRET_KEY: "${SupersetSecretKey}"
               command: >
-                /bin/sh -c "
-                pip install psycopg2-binary &&
+                pip install --target=/app/.venv/lib/python3.10/site-packages psycopg2-binary &&
                 superset db upgrade &&
                 (superset fab create-admin --username admin --firstname Admin --lastname User --email admin@example.com --password '${SupersetAdminPassword}' || true) &&
                 superset init &&
@@ -573,8 +554,6 @@ Resources:
           /usr/local/bin/docker-compose up -d
 
   # ==================== LAMBDA FUNCTIONS ====================
-
-  # Lambda 1.1: Ingestion Function (Bronze Layer)
   HackerNewsIngestFunction:
     Type: 'AWS::Lambda::Function'
     Properties:
@@ -599,7 +578,6 @@ Resources:
         - Key: Layer
           Value: 'Bronze'
 
-  # Lambda 1.2: X (Twitter) Ingestion Function
   TwitterIngestFunction:
     Type: 'AWS::Lambda::Function'
     Properties:
@@ -621,7 +599,6 @@ Resources:
         SubnetIds:
           - !Ref PrivateSubnet
 
-  # Lambda 2: Transformation Function (Silver Layer)
   TransformFunction:
     Type: 'AWS::Lambda::Function'
     Properties:
@@ -649,7 +626,6 @@ Resources:
         - Key: Layer
           Value: 'Silver'
 
-  # Lambda 3: Aggregation Function (Gold Layer)
   AggregateFunction:
     Type: 'AWS::Lambda::Function'
     Properties:
@@ -677,7 +653,6 @@ Resources:
         - Key: Layer
           Value: 'Gold'
 
-  # Lambda 4: Load-to-Postgres Function (Gold layer -> PostgreSQL on the analytics EC2 instance, for Superset)
   LoadToPostgresFunction:
     Type: 'AWS::Lambda::Function'
     DependsOn: AnalyticsEC2Instance

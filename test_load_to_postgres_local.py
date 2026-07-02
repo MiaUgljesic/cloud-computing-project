@@ -20,7 +20,7 @@ import json
 import os
 import sys
 
-# --- Konfiguracija za lokalni test (default vrednosti odgovaraju docker-compose.local.yml) ---
+# --- Konfiguracija za lokalni test (default vrednosti odgovaraju docker-compose.local.yaml) ---
 os.environ.setdefault("DB_HOST", "localhost")
 os.environ.setdefault("DB_PORT", "5432")
 os.environ.setdefault("DB_NAME", "gold_analytics")
