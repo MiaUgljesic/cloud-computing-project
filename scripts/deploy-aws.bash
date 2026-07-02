@@ -42,6 +42,7 @@ zip -j ../twitterIngest.zip twitterIngest.py
 zip -j ../transform.zip transform.py
 zip -j ../aggregate.zip aggregate.py
 zip -j ../loadToPostgres.zip loadToPostgres.py
+zip -j ../notification.zip notification.py
 cd ..
 
 echo "[INFO] 3. Uploading ZIP archives to AWS S3..."
@@ -50,9 +51,10 @@ aws s3 cp twitterIngest.zip s3://$CODE_BUCKET/
 aws s3 cp transform.zip s3://$CODE_BUCKET/
 aws s3 cp aggregate.zip s3://$CODE_BUCKET/
 aws s3 cp loadToPostgres.zip s3://$CODE_BUCKET/
+aws s3 cp notification.zip s3://$CODE_BUCKET/
 
 echo "[INFO] 4. Executing CloudFormation Deployment..."
-# This command deploys your template.yaml file to AWS to provision the infrastructure resources
+
 aws cloudformation deploy \
   --template-file template.yaml \
   --stack-name $STACK_NAME \

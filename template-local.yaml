@@ -471,6 +471,30 @@ Resources:
       Tags:
         - Key: Layer
           Value: 'Gold'
+  
+  NotificationFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: !Sub 'NotificationFunction-${Environment}'
+      Handler: python notification.py
+      Role: !GetAtt LoadToPostgresLambdaExecutionRole.Arn 
+      Runtime: 'python3.11'
+      Timeout: 60
+      MemorySize: 256
+      Code:
+        S3Bucket: 'lambda-code-bucket'
+        S3Key: 'notification.zip'
+      Environment:
+        Variables:
+          DISCORD_WEBHOOK_URL: 'https://discord.com/api/webhooks/1522266587002966136/05LwXZG3wZZHTwabYWaLjWlizxa1aCt-g6N9lJW59Np2Us3Wu_iQ4vzl0HDHxjpPsPsZ' 
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet
+      Tags:
+        - Key: Layer
+          Value: 'Monitoring'
 
 # ==================== OUTPUTS ====================
 Outputs:

@@ -48,6 +48,7 @@ def _fetch_item(item_id: int | str) -> dict | None:
 
 
 def lambda_handler(event, context):
+    raise Exception("TEST_GRESKA: Testiramo Discord notifikacije!") 
     logger.info("Starting Hacker News data ingestion pipeline...")
     
     try:

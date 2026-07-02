@@ -221,6 +221,7 @@ Resources:
                   - !GetAtt TransformFunction.Arn
                   - !GetAtt AggregateFunction.Arn
                   - !GetAtt LoadToPostgresFunction.Arn
+                  - !GetAtt NotificationFunction.Arn
 
   # The Step Functions State Machine
   MedallionPipelineStateMachine:
@@ -244,6 +245,10 @@ Resources:
                     "IngestHackerNews": {
                       "Type": "Task",
                       "Resource": "${HackerNewsIngestFunction.Arn}",
+                      "Catch": [{
+                        "ErrorEquals": ["States.ALL"],
+                        "Next": "NotifyFailure"
+                      }],
                       "End": true
                     }
                   }
@@ -254,6 +259,10 @@ Resources:
                     "IngestTwitter": {
                       "Type": "Task",
                       "Resource": "${TwitterIngestFunction.Arn}",
+                      "Catch": [{
+                        "ErrorEquals": ["States.ALL"],
+                        "Next": "NotifyFailure"
+                      }],
                       "End": true
                     }
                   }
@@ -268,6 +277,10 @@ Resources:
                 "TwitterFileKey.$": "$.IngestResults[1].body.file_key"
               },
               "ResultPath": "$.TransformResult",
+              "Catch": [{
+                "ErrorEquals": ["States.ALL"],
+                "Next": "NotifyFailure"
+              }],
               "Next": "AggregateToGold"
             },
             "AggregateToGold": {
@@ -277,6 +290,10 @@ Resources:
                 "SilverFileKey.$": "$.TransformResult.body.file_key"
               },
               "ResultPath": "$.AggregateResult",
+              "Catch": [{
+                "ErrorEquals": ["States.ALL"],
+                "Next": "NotifyFailure"
+              }],
               "Next": "LoadToPostgres"
             },
             "LoadToPostgres": {
@@ -285,6 +302,15 @@ Resources:
               "Parameters": {
                 "ReportKey.$": "$.AggregateResult.body.gold_json_report"
               },
+              "Catch": [{
+                "ErrorEquals": ["States.ALL"],
+                "Next": "NotifyFailure"
+              }],
+              "End": true
+            },
+            "NotifyFailure": {
+              "Type": "Task",
+              "Resource": "${NotificationFunction.Arn}",
               "End": true
             }
           }
@@ -684,6 +710,30 @@ Resources:
       Tags:
         - Key: Layer
           Value: 'Gold'
+  
+  NotificationFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: !Sub 'NotificationFunction-${Environment}'
+      Handler: notification.lambda_handler
+      Role: !GetAtt LoadToPostgresLambdaExecutionRole.Arn 
+      Runtime: 'python3.11'
+      Timeout: 60
+      MemorySize: 256
+      Code:
+        S3Bucket: 'lambda-code-bucket-174435304073' 
+        S3Key: 'notification.zip'
+      Environment:
+        Variables:
+          DISCORD_WEBHOOK_URL: 'https://discord.com/api/webhooks/1522266587002966136/05LwXZG3wZZHTwabYWaLjWlizxa1aCt-g6N9lJW59Np2Us3Wu_iQ4vzl0HDHxjpPsPsZ' 
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet
+      Tags:
+        - Key: Layer
+          Value: 'Monitoring'
 
 # ==================== OUTPUTS ====================
 Outputs:
