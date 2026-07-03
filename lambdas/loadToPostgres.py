@@ -6,7 +6,6 @@ import awswrangler as wr
 import boto3
 import pg8000
 
-# Setup structured logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -19,9 +18,6 @@ DB_NAME = os.environ.get("DB_NAME", "gold_analytics")
 DB_USER = os.environ.get("DB_USER", "analytics_user")
 DB_PASSWORD = os.environ.get("DB_PASSWORD")
 
-# Table DDL - created on first run if they don't already exist.
-# Each table carries a `report_date` column so re-runs for the same day are idempotent
-# (we delete existing rows for that date before inserting, see _replace_day()).
 TABLE_DDL = {
     "daily_users_metric": """
         CREATE TABLE IF NOT EXISTS daily_users_metric (
@@ -206,9 +202,6 @@ def lambda_handler(event, context):
             df = _leaderboard_to_df(report.get(report_field, []), report_date)
             _replace_day(con, table_name, report_date, df)
 
-        # Note: daily_users_metric is written separately by AggregateFunction directly to
-        # S3 parquet (partitioned by platform/date). We mirror the same-day slice into
-        # Postgres here so Superset only needs one data source.
         daily_users_path = f"s3://{GOLD_BUCKET}/daily_users_metric/"
         try:
             df_daily_users = wr.s3.read_parquet(path=daily_users_path, dataset=True)

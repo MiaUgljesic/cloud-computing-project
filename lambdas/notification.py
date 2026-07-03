@@ -10,18 +10,15 @@ logger.setLevel(logging.INFO)
 def lambda_handler(event, context):
     logger.info(f"Primljen error event iz Step Functions: {json.dumps(event)}")
     
-    # URL povlačimo iz Environment varijabli koje definišemo u YAML-u
     webhook_url = os.environ.get('DISCORD_WEBHOOK_URL')
     
     if not webhook_url or webhook_url == 'TVOJ_WEBHOOK_URL_OVDE':
         logger.error("Discord Webhook URL nije konfigurisan!")
         return {"statusCode": 400, "body": "Missing Webhook URL"}
 
-    # Izvlačimo detalje o grešci iz Step Functions konteksta
     error_msg = "Nepoznata greška u pipeline-u."
     if "Cause" in event:
         try:
-            # Često je 'Cause' stringifikovan JSON, pokušavamo da izvučemo 'errorMessage'
             cause_data = json.loads(event["Cause"])
             error_msg = cause_data.get("errorMessage", event["Cause"])
         except Exception:
@@ -29,7 +26,6 @@ def lambda_handler(event, context):
     elif "Error" in event:
         error_msg = event["Error"]
 
-    # Formatiramo lepu poruku za Discord channel
     discord_message = {
         "content": f" ! **Data Pipeline Error Alert!**\n **Error details:** `{error_msg}`"
     }

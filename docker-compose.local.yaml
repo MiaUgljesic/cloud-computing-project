@@ -42,12 +42,7 @@ services:
     environment:
       SUPERSET_SECRET_KEY: "local-dev-secret-key-change-me"
     command: >
-      /bin/sh -c "
-      pip install psycopg2-binary &&
-      superset db upgrade &&
-      (superset fab create-admin --username admin --firstname Admin --lastname User --email admin@example.com --password admin || true) &&
-      superset init &&
-      /usr/bin/run-server.sh"
+      /bin/sh -c " pip install --target=/app/.venv/lib/python3.10/site-packages psycopg2-binary && superset db upgrade && (superset fab create-admin --username admin --firstname Admin --lastname User --email admin@example.com --password admin || true) && superset init && /usr/bin/run-server.sh"
     networks:
       - pipeline-net
 

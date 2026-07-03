@@ -40,6 +40,11 @@ Parameters:
     Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64'
     Description: 'Resolved automatically to the latest Amazon Linux 2023 AMI for the region - do not override'
 
+  DiscordWebhookUrl:
+    Type: String
+    NoEcho: true
+    Description: 'Discord Webhook URL for error notifications'
+
 Resources:
   # ==================== VPC & NETWORKING ====================
   DataPipelineVPC:
@@ -238,6 +243,10 @@ Resources:
               "Type": "Parallel",
               "Next": "TransformToSilver",
               "ResultPath": "$.IngestResults",
+              "Catch": [{
+                "ErrorEquals": ["States.ALL"],
+                "Next": "NotifyFailure"
+              }],
               "Branches": [
                 {
                   "StartAt": "IngestHackerNews",
@@ -245,10 +254,6 @@ Resources:
                     "IngestHackerNews": {
                       "Type": "Task",
                       "Resource": "${HackerNewsIngestFunction.Arn}",
-                      "Catch": [{
-                        "ErrorEquals": ["States.ALL"],
-                        "Next": "NotifyFailure"
-                      }],
                       "End": true
                     }
                   }
@@ -259,10 +264,6 @@ Resources:
                     "IngestTwitter": {
                       "Type": "Task",
                       "Resource": "${TwitterIngestFunction.Arn}",
-                      "Catch": [{
-                        "ErrorEquals": ["States.ALL"],
-                        "Next": "NotifyFailure"
-                      }],
                       "End": true
                     }
                   }
@@ -315,6 +316,17 @@ Resources:
             }
           }
         }
+
+  DailyPipelineTriggerRule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Description: 'Okida Medallion Pipeline jednom dnevno'
+      ScheduleExpression: 'cron(00 22 * * ? *)'
+      State: 'ENABLED'
+      Targets:
+        - Arn: !Ref MedallionPipelineStateMachine
+          Id: 'MedallionPipelineTargetId'
+          RoleArn: !GetAtt EventBridgeStateMachineRole.Arn
 
   # ==================== S3 BUCKETS ====================
   BronzeLayerBucket:
@@ -482,6 +494,40 @@ Resources:
                 Resource:
                   - !GetAtt GoldLayerBucket.Arn
                   - !Sub '${GoldLayerBucket.Arn}/*'
+
+  NotificationLambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        # AWSLambdaVPCAccessExecutionRole daje dozvole za pisanje logova u CloudWatch 
+        # i za kreiranje mrežnih interfejsa (ako funkcija ostaje u VPC-u)
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+
+  EventBridgeStateMachineRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: ExecuteStateMachinePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'states:StartExecution'
+                Resource: !Ref MedallionPipelineStateMachine
 
   # ==================== EC2 ANALYTICS HOST ====================
   AnalyticsEC2Role:
@@ -714,9 +760,9 @@ Resources:
   NotificationFunction:
     Type: 'AWS::Lambda::Function'
     Properties:
-      FunctionName: !Sub 'NotificationFunction-${Environment}'
+      FunctionName: 'NotificationFunction'
       Handler: notification.lambda_handler
-      Role: !GetAtt LoadToPostgresLambdaExecutionRole.Arn 
+      Role: !GetAtt NotificationLambdaExecutionRole.Arn 
       Runtime: 'python3.11'
       Timeout: 60
       MemorySize: 256
@@ -725,7 +771,7 @@ Resources:
         S3Key: 'notification.zip'
       Environment:
         Variables:
-          DISCORD_WEBHOOK_URL: 'https://discord.com/api/webhooks/1522266587002966136/05LwXZG3wZZHTwabYWaLjWlizxa1aCt-g6N9lJW59Np2Us3Wu_iQ4vzl0HDHxjpPsPsZ' 
+          DISCORD_WEBHOOK_URL: !Ref DiscordWebhookUrl
       VpcConfig:
         SecurityGroupIds:
           - !Ref LambdaSecurityGroup

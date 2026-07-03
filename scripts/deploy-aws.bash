@@ -6,7 +6,26 @@ CODE_BUCKET="lambda-code-bucket-174435304073"
 STACK_NAME="cloud-computing-pipeline-prod"
 REGION="eu-north-1"
 CREDS_FILE=".aws-deploy-credentials"   # gitignore this file!
+ENV_FILE=".env"
 # =======================================================
+
+# ---- Učitavanje osetljivih podataka iz .env fajla ----
+if [ -f "$ENV_FILE" ]; then
+  echo "[INFO] Loading configuration from $ENV_FILE"
+  # Učitavamo .env i automatski eksportujemo sve varijable u bash okruženje
+  set -a
+  source "$ENV_FILE"
+  set +a
+else
+  echo "[ERROR] $ENV_FILE file not found! Please create it before deploying."
+  exit 1
+fi
+
+# Provera da li su ključne varijable definisane
+if [ -z "$DB_PASSWORD" ] || [ -z "$DISCORD_WEBHOOK_URL" ]; then
+  echo "[ERROR] Required variables (DB_PASSWORD, DISCORD_WEBHOOK_URL) are missing in $ENV_FILE"
+  exit 1
+fi
 
 # ---- Secrets: use env var if provided, otherwise generate and remember ----
 # Re-using the same CREDS_FILE across redeploys keeps the DB/Superset password
@@ -65,7 +84,8 @@ aws cloudformation deploy \
       DBPassword="$DB_PASSWORD" \
       SupersetAdminPassword="$SUPERSET_ADMIN_PASSWORD" \
       SupersetSecretKey="$SUPERSET_SECRET_KEY" \
-      AllowedSupersetCidr="$ALLOWED_SUPERSET_CIDR"
+      AllowedSupersetCidr="$ALLOWED_SUPERSET_CIDR" \
+      DiscordWebhookUrl="$DISCORD_WEBHOOK_URL"
 
 echo ""
 echo "[SUCCESS] Pipeline infrastructure successfully provisioned and deployed to AWS!"
