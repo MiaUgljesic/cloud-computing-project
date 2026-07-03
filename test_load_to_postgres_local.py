@@ -1,26 +1,8 @@
-"""
-Brzi lokalni test za loadToPostgres.py - BEZ Step Functions/LocalStack Lambda deploy-a.
 
-Poziva lambda_handler() direktno u ovom procesu, protiv lokalnog Postgres kontejnera
-(docker-compose.local.yml) i lokalno postavljenog "gold report" JSON fajla u LocalStack S3
-(ili, ako nemate S3 spreman, možete privremeno da monkey-patch-ujete _load_gold_report
-da čita sa diska - vidi komentar ispod).
-
-Preduslovi:
-  1. docker compose -f docker-compose.local.yml up -d   (Postgres mora da radi na localhost:5432)
-  2. Gold bucket u LocalStack S3 mora imati report.json na ključu koji prosledite (REPORT_KEY),
-     ili prilagodite skriptu da čita results.json direktno sa diska (pogledajte niže).
-
-Pokretanje:
-  DB_HOST=localhost DB_PORT=5432 DB_NAME=gold_analytics DB_USER=analytics_user \
-  DB_PASSWORD=analytics_pass GOLD_BUCKET_NAME=gold-layer-000000000000-dev \
-  python3 test_load_to_postgres_local.py
-"""
 import json
 import os
 import sys
 
-# --- Konfiguracija za lokalni test (default vrednosti odgovaraju docker-compose.local.yaml) ---
 os.environ.setdefault("DB_HOST", "localhost")
 os.environ.setdefault("DB_PORT", "5432")
 os.environ.setdefault("DB_NAME", "gold_analytics")
