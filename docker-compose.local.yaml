@@ -1,16 +1,5 @@
 version: '3.8'
 
-# Standalone local stack for testing the Visualization layer (KORAK 4 iz specifikacije)
-# without needing a real EC2 instance. Run with:
-#   docker compose -f docker-compose.local.yml up -d
-#
-# Superset UI:      http://localhost:8088  (admin / admin - see SUPERSET admin creds below)
-# Postgres:         localhost:5432 (analytics_user / analytics_pass / gold_analytics)
-#
-# IMPORTANT: both services are attached to the external "pipeline-net" network so that
-# LocalStack's Lambda containers (LoadToPostgresFunction) can reach postgres by hostname.
-# Create the network once with:  docker network create pipeline-net
-
 networks:
   pipeline-net:
     external: true
