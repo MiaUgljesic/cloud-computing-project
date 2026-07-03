@@ -47,6 +47,10 @@ def _load_json_from_s3(bucket: str, key: str) -> list | dict:
     response = s3_client.get_object(Bucket=bucket, Key=key)
     return json.loads(response['Body'].read().decode('utf-8'))
 
+NAMESPACE = uuid.NAMESPACE_DNS 
+
+def make_user_id(username: str, platform: str) -> str:
+    return str(uuid.uuid5(NAMESPACE, f"{platform}:{username}"))
 
 def _process_hn_data(hn_raw: dict, users_list: list, posts_list: list, post_kids_list: list) -> None:
     """Normalizes raw Hacker News records into relational structures.
@@ -68,7 +72,7 @@ def _process_hn_data(hn_raw: dict, users_list: list, posts_list: list, post_kids
     for username, karma in karma_by_username.items():
         created_epoch = created_by_username.get(username)
         users_list.append({
-            "user_id": str(uuid.uuid4()),
+            "user_id": make_user_id(username, "HackerNews"),
             "username": username,
             "platform": "HackerNews",
             "karma_score": karma,
@@ -86,7 +90,7 @@ def _process_hn_data(hn_raw: dict, users_list: list, posts_list: list, post_kids
 
         if username not in karma_by_username:
             users_list.append({
-                "user_id": str(uuid.uuid4()),
+                "user_id": make_user_id(username, "HackerNews"),
                 "username": username,
                 "platform": "HackerNews",
                 "karma_score": None,
@@ -124,7 +128,7 @@ def _process_twitter_data(twitter_raw_data: list, users_list: list, posts_list: 
         created_utc = parse_twitter_timestamp(tweet.get("created_at"))
 
         users_list.append({
-            "user_id": str(uuid.uuid4()),
+            "user_id": make_user_id(username, "X"),
             "username": username,
             "platform": "X",
             "karma_score": None,

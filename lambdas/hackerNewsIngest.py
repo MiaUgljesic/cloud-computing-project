@@ -19,9 +19,9 @@ ALGOLIA_SEARCH_URL = "https://hn.algolia.com/api/v1/search_by_date"
 
 ALGOLIA_TAGS = ["story", "ask_hn", "job", "poll", "show_hn"]
 
-HITS_PER_PAGE = 1000
-MAX_PAGES_PER_TAG = 5 
-MAX_COMMENTS_TOTAL = 500
+HITS_PER_PAGE = 50
+MAX_PAGES_PER_TAG = 1
+MAX_COMMENTS_TOTAL = 20
 
 
 def _http_get_json(url: str) -> dict | list | None:
