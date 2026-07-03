@@ -50,11 +50,6 @@ def _load_json_from_s3(bucket: str, key: str) -> list | dict:
 
 def _process_hn_data(hn_raw: dict, users_list: list, posts_list: list, post_kids_list: list) -> None:
     """Normalizes raw Hacker News records into relational structures.
-
-    Expects hn_raw = {"items": [...], "users": [...]} as produced by the
-    Algolia-backed hackerNewsIngest lambda. "users" contains real HN user
-    profiles (with true karma), fetched from /v0/user/{username}.json since
-    the item endpoint never carries karma.
     """
     hn_items = hn_raw.get("items", []) if isinstance(hn_raw, dict) else hn_raw
     hn_user_profiles = hn_raw.get("users", []) if isinstance(hn_raw, dict) else []
@@ -155,10 +150,7 @@ def _finalize_users_dtypes(df_users: pd.DataFrame) -> pd.DataFrame:
     """
     Locks nullable numeric columns to pandas' nullable Int64 dtype so every
     run of this lambda produces the exact same physical schema, regardless of
-    whether nulls happen to be present. Without this, pandas infers float64
-    when NaNs exist and int64 when they don't, which causes Athena/AWS
-    Wrangler to fail with "incompatible types: double vs int64" when merging
-    partitions written by different invocations.
+    whether nulls happen to be present.
     """
     if df_users.empty:
         return df_users
