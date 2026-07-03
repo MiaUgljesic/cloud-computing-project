@@ -13,3 +13,6 @@ gold_output.json
 .idea/
 
 production/
+
+.env
+.aws-deploy-credentials

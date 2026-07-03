@@ -7,6 +7,28 @@ Parameters:
     Default: 'dev'
     Description: 'Environment name'
 
+  DBHost:
+    Type: String
+    Default: 'postgres-local'
+    Description: 'Hostname of the local Postgres container (see docker-compose.local.yml). Must be reachable from LocalStack Lambda containers - see README notes on the shared "pipeline-net" docker network.'
+
+  DBPort:
+    Type: String
+    Default: '5432'
+
+  DBName:
+    Type: String
+    Default: 'gold_analytics'
+
+  DBUser:
+    Type: String
+    Default: 'analytics_user'
+
+  DBPassword:
+    Type: String
+    Default: 'analytics_pass'
+    Description: 'Must match POSTGRES_PASSWORD in docker-compose.local.yml'
+
 Resources:
   # ==================== VPC & NETWORKING ====================
   DataPipelineVPC:
@@ -69,6 +91,7 @@ Resources:
                   - !GetAtt TwitterIngestFunction.Arn
                   - !GetAtt TransformFunction.Arn
                   - !GetAtt AggregateFunction.Arn
+                  - !GetAtt LoadToPostgresFunction.Arn
                   
   # The Step Functions State Machine
   MedallionPipelineStateMachine:
@@ -124,6 +147,15 @@ Resources:
               "Resource": "${AggregateFunction.Arn}",
               "Parameters": {
                 "SilverFileKey.$": "$.TransformResult.body.file_key"
+              },
+              "ResultPath": "$.AggregateResult",
+              "Next": "LoadToPostgres"
+            },
+            "LoadToPostgres": {
+              "Type": "Task",
+              "Resource": "${LoadToPostgresFunction.Arn}",
+              "Parameters": {
+                "ReportKey.$": "$.AggregateResult.body.gold_json_report"
               },
               "End": true
             }
@@ -282,6 +314,33 @@ Resources:
                   - !GetAtt GoldLayerBucket.Arn
                   - !Sub '${GoldLayerBucket.Arn}/*'
 
+  # 4. LOAD-TO-POSTGRES FUNCTION ROLE (Read-only from Gold layer)
+  LoadToPostgresLambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: 'LoadToPostgresLambdaExecutionRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 'lambda.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+      Policies:
+        - PolicyName: 'LoadToPostgresGoldReadPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:ListBucket'
+                Resource:
+                  - !GetAtt GoldLayerBucket.Arn
+                  - !Sub '${GoldLayerBucket.Arn}/*'
+
   # ==================== LAMBDA FUNCTIONS ====================
 
   # Lambda 1.1: Ingestion Function (Bronze Layer)
@@ -382,6 +441,60 @@ Resources:
       Tags:
         - Key: Layer
           Value: 'Gold'
+
+  # Lambda 4: Load-to-Postgres Function (Gold layer -> local PostgreSQL container, for Superset)
+  LoadToPostgresFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: 'LoadToPostgresFunction'
+      Handler: 'loadToPostgres.lambda_handler'
+      Role: !GetAtt LoadToPostgresLambdaExecutionRole.Arn
+      Runtime: 'python3.11'
+      Timeout: 120
+      MemorySize: 512
+      Code:
+        S3Bucket: 'lambda-code-bucket'
+        S3Key: 'loadToPostgres.zip'
+      Environment:
+        Variables:
+          GOLD_BUCKET_NAME: !Ref GoldLayerBucket
+          DB_HOST: !Ref DBHost
+          DB_PORT: !Ref DBPort
+          DB_NAME: !Ref DBName
+          DB_USER: !Ref DBUser
+          DB_PASSWORD: !Ref DBPassword
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet
+      Tags:
+        - Key: Layer
+          Value: 'Gold'
+  
+  NotificationFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: !Sub 'NotificationFunction-${Environment}'
+      Handler: python notification.py
+      Role: !GetAtt LoadToPostgresLambdaExecutionRole.Arn 
+      Runtime: 'python3.11'
+      Timeout: 60
+      MemorySize: 256
+      Code:
+        S3Bucket: 'lambda-code-bucket'
+        S3Key: 'notification.zip'
+      Environment:
+        Variables:
+          DISCORD_WEBHOOK_URL: 'https://discord.com/api/webhooks/1522266587002966136/05LwXZG3wZZHTwabYWaLjWlizxa1aCt-g6N9lJW59Np2Us3Wu_iQ4vzl0HDHxjpPsPsZ' 
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet
+      Tags:
+        - Key: Layer
+          Value: 'Monitoring'
 
 # ==================== OUTPUTS ====================
 Outputs:
