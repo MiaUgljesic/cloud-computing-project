@@ -110,8 +110,7 @@ def _generate_leaderboards(df_users: pd.DataFrame, df_posts: pd.DataFrame) -> di
     """
     Generates Top 10 leaderboards using only real, observed fields. If a
     metric is missing for every row (e.g. no karma data collected at all),
-    the leaderboard is returned empty rather than filled with fabricated
-    numbers.
+    the leaderboard is returned empty.
     """
     # 1. Top 10 X users by followers
     df_x_users = df_users[df_users['platform'] == 'X'].copy()
@@ -126,7 +125,7 @@ def _generate_leaderboards(df_users: pd.DataFrame, df_posts: pd.DataFrame) -> di
     else:
         top_10_x = pd.DataFrame(columns=['username', 'followers_count'])
 
-    # 2. Top 10 Hacker News users by karma (real karma from HN /user endpoint)
+    # 2. Top 10 Hacker News users by karma 
     df_hn_users = df_users[df_users['platform'] == 'HackerNews'].copy()
     if 'karma_score' in df_hn_users.columns:
         df_hn_users_with_karma = df_hn_users.dropna(subset=['karma_score'])
@@ -141,7 +140,7 @@ def _generate_leaderboards(df_users: pd.DataFrame, df_posts: pd.DataFrame) -> di
         top_10_hn_high = pd.DataFrame(columns=['username', 'karma_score'])
         top_10_hn_low = pd.DataFrame(columns=['username', 'karma_score'])
 
-    # 3. Top 10 Hacker News posts/jobs by real HN 'score' (points) field
+    # 3. Top 10 Hacker News posts/jobs by real HN score points field
     df_posts_eval = df_posts.copy()
     if 'score' in df_posts_eval.columns:
         df_posts_eval = df_posts_eval.dropna(subset=['score'])
@@ -184,14 +183,12 @@ def lambda_handler(event, context):
         avg_dq_score = round((dq_users + dq_posts) / 2, 2)
         logger.info(f"Global Lake Data Quality Score calculated: {avg_dq_score}%")
 
-        # Compile Data Metric Aggregations
+        
         df_daily_users = _generate_daily_users_metrics(df_users, current_date_str, avg_dq_score)
         hn_metrics = _build_hn_metrics(df_posts, current_date_str)
         leaderboards = _generate_leaderboards(df_users, df_posts)
 
-        # Write Parquet Datasets to Gold Layer.
-        # dtype= pins the physical column types explicitly so repeated runs
-        # never disagree on int64 vs double for the same column.
+        
         gold_users_metric_path = f"s3://{GOLD_BUCKET}/daily_users_metric/"
         logger.info(f"Writing daily users fact/metrics to: {gold_users_metric_path}")
 
@@ -204,7 +201,7 @@ def lambda_handler(event, context):
             dtype={"total_users": "bigint", "new_users": "bigint", "data_quality_score": "double"},
         )
 
-        # Consolidate and write the final Unified Analytical Snapshot (.json)
+        
         summary_report = {
             "date": current_date_str,
             "data_quality_kpi_percent": avg_dq_score,
